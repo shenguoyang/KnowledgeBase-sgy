@@ -15,12 +15,12 @@ PC 端：开始工作前 git pull → 编辑 → git push
 
 ## 2. 方案对比
 
-| 方案 | 自动同步 | 难度 | 稳定性 | 推荐 |
-|------|----------|------|--------|------|
-| **Git Sync 插件** | ✅ 打开/关闭自动 | ⭐ 极简 | ⭐⭐⭐⭐ | 🏆 首选 |
-| **Termux + Tasker** | ✅ 最强自动化 | ⭐⭐⭐⭐ 复杂 | ⭐⭐⭐⭐⭐ | 进阶 |
-| **GitHub Gitless Sync** | ✅ 定时自动 | ⭐⭐ 简单 | ⭐⭐⭐⭐ | 备选 |
-| Obsidian Git 内置 | ✅ 但不稳定 | ⭐⭐ | ⭐ 易崩溃 | ❌ 不推荐 |
+| 方案                      | 自动同步      | 难度      | 稳定性   | 推荐    |
+| ----------------------- | --------- | ------- | ----- | ----- |
+| **Git Sync 插件**         | ✅ 打开/关闭自动 | ⭐ 极简    | ⭐⭐⭐⭐  | 🏆 首选 |
+| **Termux + Tasker**     | ✅ 最强自动化   | ⭐⭐⭐⭐ 复杂 | ⭐⭐⭐⭐⭐ | 进阶    |
+| **GitHub Gitless Sync** | ✅ 定时自动    | ⭐⭐ 简单   | ⭐⭐⭐⭐  | 备选    |
+| Obsidian Git 内置         | ✅ 但不稳定    | ⭐⭐      | ⭐ 易崩溃 | ❌ 不推荐 |
 
 > **建议**：90% 的用户直接选 **方案一（Git Sync）**，开箱即用。追求极致可靠再上方案二。
 
@@ -156,11 +156,11 @@ Thumbs.db
 
 **步骤二：从 F-Droid 安装以下应用**
 
-| 应用 | 用途 |
-|------|------|
-| **Termux** | Linux 终端模拟器 |
+| 应用                | 用途                  |
+| ----------------- | ------------------- |
+| **Termux**        | Linux 终端模拟器         |
 | **Termux:Tasker** | Termux 与 Tasker 的桥梁 |
-| **Termux:API** | 提供 Android API 访问 |
+| **Termux:API**    | 提供 Android API 访问   |
 
 **步骤三：安装 Tasker**
 
@@ -183,6 +183,9 @@ pkg install -y git openssh termux-api
 
 # 4. 创建 Obsidian 仓库目录
 mkdir -p /storage/emulated/0/repos/Obsidian
+
+git config --global user.name "你的GitHub用户名"
+git config --global user.email "你的GitHub邮箱"
 ```
 
 ### 4.4 克隆自动化脚本
@@ -203,6 +206,7 @@ source "$HOME/setup"
 ```
 
 脚本会自动：
+
 - 生成 SSH 密钥对
 - 将公钥复制到剪贴板
 - 创建 Termux 启动脚本
@@ -292,6 +296,7 @@ Thumbs.db
 **步骤二：导入自动化项目**
 
 1. 在手机文件管理器中找到：
+   
    ```
    /storage/emulated/0/repos/obsidian-android-sync/
    ```
@@ -303,22 +308,22 @@ Thumbs.db
 
 长按桌面 → 添加 Tasker 小组件：
 
-| 组件 | 功能 |
-|------|------|
-| **Sync Vaults** | 手动触发全量同步 |
+| 组件                | 功能                      |
+| ----------------- | ----------------------- |
+| **Sync Vaults**   | 手动触发全量同步                |
 | **Vaults Status** | 显示每个 Vault 的 git status |
-| **Sync Log** | 查看同步日志 |
+| **Sync Log**      | 查看同步日志                  |
 
 ### 4.11 自动化效果
 
 配置完成后，以下操作**全自动**：
 
-| 触发条件 | 自动操作 |
-|----------|----------|
-| 打开 Obsidian | `git pull` 拉取最新 |
+| 触发条件        | 自动操作                                                 |
+| ----------- | ---------------------------------------------------- |
+| 打开 Obsidian | `git pull` 拉取最新                                      |
 | 关闭 Obsidian | `git add . && git commit -m "auto sync" && git push` |
-| 每天凌晨 4:00 | 定时全量同步 |
-| 同步失败 | 推送通知提醒 |
+| 每天凌晨 4:00   | 定时全量同步                                               |
+| 同步失败        | 推送通知提醒                                               |
 
 ---
 
@@ -388,6 +393,7 @@ git push
 **症状**：`Permission denied (publickey)` 或 `Could not resolve hostname`
 
 **解决**：
+
 - 确认公钥已正确添加到 GitHub
 - 确认仓库使用 SSH 地址（`git@github.com:...`）而非 HTTPS
 - 国内用户检查网络是否能访问 GitHub，必要时使用代理
@@ -397,6 +403,7 @@ git push
 **症状**：`403 Forbidden` 或 `Authentication failed`
 
 **解决**：
+
 - 确认 Token 勾选了 `repo` 完整权限
 - 确认 Token 未过期
 - 如果 Token 丢失，重新生成并替换
@@ -408,6 +415,7 @@ git push
 ### 7.4 Obsidian 打开仓库后空白
 
 **解决**：
+
 - 确认仓库目录确实包含 `.md` 文件
 - 检查 `.obsidian/` 目录是否存在（首次打开 Obsidian 会自动创建）
 - 尝试关闭 Vault 后重新打开
@@ -417,6 +425,7 @@ git push
 **原因**：`.obsidian/` 目录包含了插件、主题等配置，不同设备的配置可能冲突。
 
 **解决**：在 `.gitignore` 中排除以下文件：
+
 ```gitignore
 .obsidian/workspace.json
 .obsidian/workspace-mobile.json
@@ -432,6 +441,7 @@ git push
 ### 7.6 国内连接 GitHub 太慢/不稳定
 
 **解决**：
+
 - 使用 **Gitee（码云）** 替代 GitHub，国内访问快
 - 在电脑上配置代理，手机端使用 Termux 可设置 `proxychains`
 - 使用 **GitHub Gitless Sync** 插件（通过 HTTPS API 通信，兼容性更好）
@@ -439,6 +449,7 @@ git push
 ### 7.7 大文件或图片同步慢
 
 **建议**：
+
 - 图片附件控制在 1MB 以内
 - 大文件较多的仓库考虑使用 Obsidian 官方 Sync 服务（付费，$4/月）
 - 或将图片单独存储（图床），笔记中引用 URL
@@ -447,13 +458,14 @@ git push
 
 ## 8. 总结
 
-| 你的需求 | 推荐方案 |
-|----------|----------|
-| 简单、够用、不想折腾 | 方案一：Git Sync |
-| 追求完美自动化、技术能力强 | 方案二：Termux + Tasker |
+| 你的需求              | 推荐方案                   |
+| ----------------- | ---------------------- |
+| 简单、够用、不想折腾        | 方案一：Git Sync           |
+| 追求完美自动化、技术能力强     | 方案二：Termux + Tasker    |
 | 不想装 Git、只用 GitHub | GitHub Gitless Sync 插件 |
 
 **核心原则**：
+
 1. **先 pull 再编辑** — 避免冲突的第一准则
 2. **编辑完立即 push** — 不做本地积压
 3. **不要同时在两端编辑同一文件** — 人为避免冲突
