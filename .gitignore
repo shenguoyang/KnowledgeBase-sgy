@@ -1,0 +1,8 @@
+# Claude Code 配置
+.claude/
+
+# Obsidian 配置
+.obsidian/
+
+# Git 自身目录
+.git/
