@@ -1,0 +1,1250 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>磁盘预分配环形缓冲区存储方案</title>
+<style>
+:root {
+  --nav-width: 280px;
+  --primary: #2563eb;
+  --primary-light: #eff6ff;
+  --bg: #f8fafc;
+  --card-bg: #ffffff;
+  --text: #1e293b;
+  --text-secondary: #64748b;
+  --border: #e2e8f0;
+  --code-bg: #1e293b;
+  --code-text: #e2e8f0;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --radius: 8px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; display: flex; min-height: 100vh; }
+
+/* ── 左侧导航 ── */
+nav {
+  width: var(--nav-width); min-width: var(--nav-width);
+  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+  color: #cbd5e1; position: fixed; top: 0; left: 0; bottom: 0;
+  overflow-y: auto; overflow-x: hidden; z-index: 100;
+  scrollbar-width: thin; scrollbar-color: #334155 transparent;
+}
+nav::-webkit-scrollbar { width: 4px; }
+nav::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+nav .logo {
+  padding: 24px 20px 20px; border-bottom: 1px solid #334155;
+  font-size: 15px; font-weight: 700; color: #f1f5f9;
+  letter-spacing: 0.5px; display: flex; align-items: center; gap: 10px;
+}
+nav .logo .icon { width: 32px; height: 32px; background: var(--primary); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+nav ul { list-style: none; padding: 8px 0; }
+nav li a {
+  display: block; padding: 8px 20px 8px 24px; color: #94a3b8;
+  text-decoration: none; font-size: 13.5px; transition: all .15s;
+  border-left: 3px solid transparent;
+}
+nav li a:hover { color: #e2e8f0; background: rgba(255,255,255,.04); }
+nav li a.active { color: #fff; background: rgba(37,99,235,.15); border-left-color: var(--primary); font-weight: 600; }
+nav li a.sub { padding-left: 40px; font-size: 12.5px; }
+nav .section-title { padding: 16px 20px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: #64748b; font-weight: 700; }
+
+/* ── 右侧内容 ── */
+main { margin-left: var(--nav-width); flex: 1; padding: 32px 40px; max-width: 1100px; }
+section { margin-bottom: 48px; }
+h1 { font-size: 28px; font-weight: 800; margin-bottom: 8px; color: #0f172a; }
+h2 { font-size: 22px; font-weight: 700; margin: 32px 0 16px; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: #0f172a; }
+h3 { font-size: 17px; font-weight: 600; margin: 24px 0 10px; color: #334155; }
+h4 { font-size: 15px; font-weight: 600; margin: 16px 0 8px; color: #475569; }
+p { margin: 8px 0; color: #475569; }
+.card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin: 16px 0; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+pre { background: var(--code-bg); color: var(--code-text); padding: 16px 20px; border-radius: var(--radius); overflow-x: auto; font-size: 13px; line-height: 1.6; margin: 12px 0; }
+code { font-family: "Cascadia Code", "Fira Code", "Consolas", monospace; font-size: 13px; }
+:not(pre) > code { background: #f1f5f9; color: var(--primary); padding: 2px 6px; border-radius: 4px; font-size: 12.5px; }
+table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13.5px; }
+th, td { border: 1px solid var(--border); padding: 10px 14px; text-align: left; }
+th { background: #f8fafc; font-weight: 700; color: #334155; font-size: 12.5px; text-transform: uppercase; letter-spacing: .5px; }
+td { color: #475569; }
+tr:hover td { background: #fafbfc; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+.badge-ok { background: #dcfce7; color: #166534; }
+.badge-warn { background: #fef3c7; color: #92400e; }
+.badge-info { background: #dbeafe; color: #1e40af; }
+.note { border-left: 4px solid var(--primary); background: var(--primary-light); padding: 12px 16px; border-radius: 0 var(--radius) var(--radius) 0; margin: 12px 0; font-size: 13.5px; }
+.stars { color: var(--warning); letter-spacing: 2px; }
+
+/* ── 可视化演示区 ── */
+.vis-container { position: relative; margin: 20px 0; }
+.vis-canvas { display: block; width: 100%; border: 1px solid var(--border); border-radius: var(--radius); background: #fff; cursor: default; }
+.vis-controls { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+.vis-controls button {
+  padding: 7px 16px; border: 1px solid var(--border); border-radius: 6px;
+  background: #fff; cursor: pointer; font-size: 13px; font-weight: 500;
+  transition: all .15s; color: #334155;
+}
+.vis-controls button:hover { background: var(--primary-light); border-color: var(--primary); color: var(--primary); }
+.vis-controls button:active { transform: scale(.97); }
+.vis-controls button.primary-btn { background: var(--primary); color: #fff; border-color: var(--primary); }
+.vis-controls button.primary-btn:hover { background: #1d4ed8; }
+.vis-info { font-size: 13px; color: var(--text-secondary); margin-left: auto; }
+.vis-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); margin-top: 6px; }
+.vis-legend span { display: flex; align-items: center; gap: 4px; }
+.vis-legend .swatch { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+
+/* ── 动画演示区 ── */
+.anim-stage { background: var(--card-bg); border: 2px dashed var(--border); border-radius: var(--radius); padding: 24px; position: relative; overflow: hidden; margin: 16px 0; min-height: 280px; }
+.disk-grid { display: flex; gap: 1px; flex-wrap: wrap; align-items: flex-end; }
+.disk-block { width: 36px; border-radius: 3px; transition: all .3s ease; position: relative; font-size: 9px; color: #fff; text-align: center; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.disk-block:hover { transform: scale(1.15); z-index: 2; box-shadow: 0 4px 12px rgba(0,0,0,.2); }
+.disk-block.empty { background: #e2e8f0; border: 1px solid #cbd5e1; }
+.disk-block.used { background: linear-gradient(135deg, #3b82f6, #2563eb); border: 1px solid #1d4ed8; }
+.disk-block.overwritten { background: linear-gradient(135deg, #f59e0b, #d97706); border: 1px solid #b45309; animation: pulse .6s ease; }
+.disk-block.fragmented { background: repeating-linear-gradient(45deg, #ef4444, #ef4444 2px, #dc2626 2px, #dc2626 4px); border: 1px solid #b91c1c; }
+@keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.3); } 100% { transform: scale(1); } }
+@keyframes slideIn { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
+
+/* 响应式 */
+@media (max-width: 900px) {
+  nav { width: 200px; min-width: 200px; }
+  main { margin-left: 200px; padding: 20px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ 左侧导航 ═══════════════ -->
+<nav>
+  <div class="logo"><span class="icon">◈</span> 环形缓冲区存储方案</div>
+  <ul>
+    <li><a href="#s-principle" class="active">🎬 原理可视化演示</a></li>
+    <li class="section-title">方案设计</li>
+    <li><a href="#s-startup-defrag">启动整理与空间独占</a></li>
+    <li><a href="#s-background">背景与目标</a></li>
+    <li><a href="#s-architecture">总体架构</a></li>
+    <li><a href="#s-data-structures">数据结构设计</a></li>
+    <li><a href="#s-algorithms">关键算法</a></li>
+    <li><a href="#s-concurrency">并发模型</a></li>
+    <li><a href="#s-recovery">异常恢复</a></li>
+    <li><a href="#s-windows">Windows 平台要点</a></li>
+    <li><a href="#s-config">配置参数设计</a></li>
+    <li><a href="#s-integration">系统集成</a></li>
+    <li><a href="#s-comparison">优缺点与对比</a></li>
+    <li class="section-title">C++ 组件库</li>
+    <li><a href="#s-api-types">公共类型定义</a></li>
+    <li><a href="#s-api-class">ImageRingBuffer 接口</a></li>
+    <li><a href="#s-api-usage">使用示例</a></li>
+    <li><a href="#s-api-checklist">接口确认清单</a></li>
+  </ul>
+</nav>
+
+<!-- ═══════════════ 右侧内容 ═══════════════ -->
+<main>
+
+<!-- ══════════════ 原理可视化演示 ══════════════ -->
+<section id="s-principle">
+  <h1>🎬 底层原理可视化演示</h1>
+  <p>以下演示帮助不懂磁盘碎片和环形缓冲区的新人理解本方案的核心思路。</p>
+
+  <!-- 演示1: 碎片是怎么产生的 -->
+  <h3>📌 第一幕：碎片是怎么产生的？</h3>
+  <div class="card">
+    <p>想象磁盘是一排连续的<strong>储物柜</strong>，每个柜子大小固定（比如 4KB）。当你不断存入大小不一、时间不一的数据，又不时删除一些时，磁盘上就出现了很多"空洞"——这就是<strong>磁盘碎片</strong>。</p>
+    <div class="anim-stage" id="stage-frag">
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">⬇ 传统方式：每张图一个文件，随意创建/删除</p>
+      <div class="disk-grid" id="grid-frag"></div>
+      <div class="vis-legend" style="margin-top:12px;">
+        <span><span class="swatch" style="background:#3b82f6;"></span> 正常文件</span>
+        <span><span class="swatch" style="background:#e2e8f0;"></span> 空闲空间</span>
+        <span><span class="swatch" style="background:repeating-linear-gradient(45deg,#ef4444,#ef4444 2px,#dc2626 2px,#dc2626 4px);"></span> 碎片空洞（难以利用）</span>
+      </div>
+      <div class="vis-controls">
+        <button onclick="fragSim.addRandom()">存入随机文件</button>
+        <button onclick="fragSim.deleteRandom()">随机删除文件</button>
+        <button onclick="fragSim.defrag()">整理碎片（看看多麻烦）</button>
+        <button onclick="fragSim.reset()">重置</button>
+        <span class="vis-info" id="frag-info"></span>
+      </div>
+      <div class="note">
+        <strong>关键洞察：</strong>每张图一个小文件 → 日积月累 → 磁盘变成"瑞士奶酪" → 新文件找不到整块空间 → 被"撕碎"存放 →
+        磁头疯狂跳动 → 写入速度越来越慢。这就是你要解决的根本问题。
+      </div>
+    </div>
+  </div>
+
+  <!-- 演示2: 预分配如何解决 -->
+  <h3>📌 第二幕：预分配——先占坑、再填坑</h3>
+  <div class="card">
+    <p>本方案的核心思想很像<strong>电影院</strong>：开场前就把整个放映厅的座位全包下来（预分配），来一个观众坐一个位置（写入），坐满了怎么办？回到第一排重新开始（环形覆盖）。</p>
+    <div class="anim-stage" id="stage-ring">
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">⬇ 环形缓冲区：固定大小，写满后回到开头继续</p>
+      <canvas id="ring-canvas" class="vis-canvas" height="320"></canvas>
+      <div class="vis-legend">
+        <span><span class="swatch" style="background:#e2e8f0;"></span> 空闲 Block</span>
+        <span><span class="swatch" style="background:#3b82f6;"></span> 已写入 (序号 N)</span>
+        <span><span class="swatch" style="background:#f59e0b;"></span> 被覆盖 (旧数据被新数据替换)</span>
+        <span style="margin-left:12px;">🔴 写入指针</span>
+        <span>🟢 最新数据</span>
+      </div>
+      <div class="vis-controls">
+        <button class="primary-btn" onclick="ringSim.writeImage()">写入一张图像</button>
+        <button onclick="ringSim.writeBatch(5)">连续写 5 张</button>
+        <button onclick="ringSim.writeBatch(20)">连续写 20 张</button>
+        <button onclick="ringSim.reset()">重置</button>
+        <span class="vis-info" id="ring-info"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 演示3: 文件内部布局 -->
+  <h3>📌 第三幕：文件里面长什么样？</h3>
+  <div class="card">
+    <p>整个文件由三部分组成。就像一个<strong>带目录的相册</strong>：</p>
+    <canvas id="layout-canvas" class="vis-canvas" height="180"></canvas>
+    <div class="vis-legend">
+      <span><span class="swatch" style="background:#0f172a;"></span> Header (目录页 — 4KB)</span>
+      <span><span class="swatch" style="background:#3b82f6;"></span> Block 区 (照片页 — 每页一张图)</span>
+      <span><span class="swatch" style="background:#10b981;"></span> Index 区 (索引页 — 记录每张照片的车牌和时间)</span>
+    </div>
+    <div class="note">
+      <strong>为什么 Index 区放在末尾？</strong>Block 区是热数据（每次都要写），放在一起减少磁头跳跃；Index 只在尾部追加更新。
+    </div>
+  </div>
+
+  <!-- 演示4: 写入流程动画 -->
+  <h3>📌 第四幕：一张图是怎么存进去的？</h3>
+  <div class="card">
+    <p>以下动画展示从"来车拍照"到"数据安全落盘"的完整流程：</p>
+    <div id="flow-dom" style="padding:16px 0;">
+      <!-- 6 个步骤圆 + 连线 -->
+      <div style="display:flex;align-items:center;justify-content:center;gap:0;flex-wrap:wrap;margin-bottom:16px;">
+        <div class="flow-step-circle" style="width:52px;height:52px;border-radius:50%;background:#cbd5e1;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;text-align:center;line-height:1.2;transition:all .35s ease;flex-shrink:0;">获取<br>写锁</div>
+        <div class="flow-step-line" style="width:40px;height:3px;background:#cbd5e1;transition:all .35s ease;flex-shrink:0;"></div>
+        <div class="flow-step-circle" style="width:52px;height:52px;border-radius:50%;background:#cbd5e1;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;text-align:center;line-height:1.2;transition:all .35s ease;flex-shrink:0;">计算<br>偏移</div>
+        <div class="flow-step-line" style="width:40px;height:3px;background:#cbd5e1;transition:all .35s ease;flex-shrink:0;"></div>
+        <div class="flow-step-circle" style="width:52px;height:52px;border-radius:50%;background:#cbd5e1;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;text-align:center;line-height:1.2;transition:all .35s ease;flex-shrink:0;">写入<br>Block</div>
+        <div class="flow-step-line" style="width:40px;height:3px;background:#cbd5e1;transition:all .35s ease;flex-shrink:0;"></div>
+        <div class="flow-step-circle" style="width:52px;height:52px;border-radius:50%;background:#cbd5e1;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;text-align:center;line-height:1.2;transition:all .35s ease;flex-shrink:0;">写入<br>Index</div>
+        <div class="flow-step-line" style="width:40px;height:3px;background:#cbd5e1;transition:all .35s ease;flex-shrink:0;"></div>
+        <div class="flow-step-circle" style="width:52px;height:52px;border-radius:50%;background:#cbd5e1;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;text-align:center;line-height:1.2;transition:all .35s ease;flex-shrink:0;">更新<br>Header</div>
+        <div class="flow-step-line" style="width:40px;height:3px;background:#cbd5e1;transition:all .35s ease;flex-shrink:0;"></div>
+        <div class="flow-step-circle" style="width:52px;height:52px;border-radius:50%;background:#cbd5e1;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;text-align:center;line-height:1.2;transition:all .35s ease;flex-shrink:0;">Flush<br>完成</div>
+      </div>
+      <!-- 详情面板 -->
+      <div id="flow-detail" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 20px;min-height:130px;font-family:'Cascadia Code','Fira Code',Consolas,monospace;font-size:12px;color:#94a3b8;white-space:pre-line;line-height:1.8;">点击下方「▶ 逐步演示写入流程」按钮，观看完整存储过程</div>
+    </div>
+    <style>
+      .flow-step-circle.active { background: #3b82f6 !important; transform: scale(1.15); box-shadow: 0 0 0 4px rgba(59,130,246,.25); }
+      .flow-step-circle.done { background: #10b981 !important; }
+      .flow-step-line.done { background: #10b981 !important; }
+    </style>
+    <div class="vis-controls">
+      <button class="primary-btn" id="btn-step-write">▶ 逐步演示写入流程</button>
+      <button id="btn-step-reset">重置</button>
+      <span class="vis-info" id="flow-info">点击按钮逐步观看写入流程</span>
+    </div>
+  </div>
+
+  <!-- 演示5: 环形覆盖原理 -->
+  <h3>📌 第五幕：空间写满了怎么办？——环形覆盖</h3>
+  <div class="card">
+    <p>这是本方案最精妙的地方。不需要"删除"操作——新的图像直接<strong>覆盖</strong>最旧的数据，就像时钟指针一样永远向前。</p>
+    <canvas id="wrap-canvas" class="vis-canvas" height="200"></canvas>
+    <div class="vis-legend">
+      <span><span class="swatch" style="background:#3b82f6;"></span> 有效数据</span>
+      <span><span class="swatch" style="background:#f59e0b;"></span> 本次被覆盖的旧数据</span>
+      <span><span class="swatch" style="background:#ef4444;"></span> 写入指针</span>
+    </div>
+    <div class="vis-controls">
+      <button class="primary-btn" onclick="wrapSim.step()">写入 1 张（触发覆盖）</button>
+      <button onclick="wrapSim.writeMany(10)">写入 10 张</button>
+      <button onclick="wrapSim.reset()">重置到临界状态</button>
+      <span class="vis-info" id="wrap-info"></span>
+    </div>
+    <div class="note">
+      <strong>sequence 的作用：</strong>文件中原先的数据可能有序列号 1~10000，写满一圈后，第 1 块被序列号 10001 覆盖。
+      判断数据新旧不看物理位置，看 sequence 数字大小即可。
+    </div>
+  </div>
+
+  <!-- 演示6: 启动整理+空间独占 -->
+  <h3>📌 第六幕：启动时磁盘整理 + 空间独占</h3>
+  <div class="card">
+    <p>应用启动时，首先<strong>分析磁盘空闲空间布局</strong>，找到最大的连续空闲区域，然后预分配文件、验证连续性。如果碎片严重，自动触发<strong>文件簇重排</strong>（FSCTL_MOVE_FILE）。最后用 <strong>dwShareMode=0</strong> 独占锁定文件，其他程序无法读写。</p>
+
+    <!-- 三步可视化 -->
+    <div style="display:flex;gap:12px;margin:16px 0;flex-wrap:wrap;">
+      <div id="defrag-step1" style="flex:1;min-width:180px;background:#f8fafc;border:2px solid #e2e8f0;border-radius:8px;padding:14px;text-align:center;transition:all .4s ease;">
+        <div style="font-size:32px;margin-bottom:6px;">🔍</div>
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;">① 分析空闲位图</div>
+        <div style="font-size:11px;color:#64748b;">FSCTL_GET_VOLUME_BITMAP</div>
+        <div id="defrag-info-1" style="font-size:11px;color:#94a3b8;margin-top:6px;"></div>
+      </div>
+      <div style="display:flex;align-items:center;font-size:20px;color:#cbd5e1;">➤</div>
+      <div id="defrag-step2" style="flex:1;min-width:180px;background:#f8fafc;border:2px solid #e2e8f0;border-radius:8px;padding:14px;text-align:center;transition:all .4s ease;">
+        <div style="font-size:32px;margin-bottom:6px;">📦</div>
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;">② 预分配 + 验证</div>
+        <div style="font-size:11px;color:#64748b;">SetFileValidData + FSCTL_GET_RETRIEVAL_POINTERS</div>
+        <div id="defrag-info-2" style="font-size:11px;color:#94a3b8;margin-top:6px;"></div>
+      </div>
+      <div style="display:flex;align-items:center;font-size:20px;color:#cbd5e1;">➤</div>
+      <div id="defrag-step3" style="flex:1;min-width:180px;background:#f8fafc;border:2px solid #e2e8f0;border-radius:8px;padding:14px;text-align:center;transition:all .4s ease;">
+        <div style="font-size:32px;margin-bottom:6px;">🔒</div>
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;">③ 独占锁定</div>
+        <div style="font-size:11px;color:#64748b;">dwShareMode=0 + LockFileEx</div>
+        <div id="defrag-info-3" style="font-size:11px;color:#94a3b8;margin-top:6px;"></div>
+      </div>
+    </div>
+
+    <!-- 磁盘空间可视化 -->
+    <div style="margin:12px 0;">
+      <p style="font-size:12px;color:#64748b;margin-bottom:4px;">磁盘物理空间（每一小格 = 1 个 extent）：</p>
+      <div id="defrag-disk-viz" style="display:flex;gap:1px;flex-wrap:wrap;background:#fff;border:1px solid #e2e8f0;border-radius:4px;padding:8px;min-height:40px;align-items:flex-start;"></div>
+      <div class="vis-legend" style="margin-top:6px;">
+        <span><span class="swatch" style="background:#3b82f6;"></span> 我们的环形文件（1 extent = 连续）</span>
+        <span><span class="swatch" style="background:#ef4444;"></span> 碎片化的其他文件</span>
+        <span><span class="swatch" style="background:#e2e8f0;"></span> 空闲空间</span>
+        <span><span class="swatch" style="background:#10b981;"></span> 整理后的连续空闲</span>
+      </div>
+    </div>
+
+    <!-- 三层隔离示意 -->
+    <div style="background:linear-gradient(135deg,#0f172a,#1e293b);border-radius:8px;padding:16px;margin:12px 0;color:#e2e8f0;font-size:12px;">
+      <div style="text-align:center;font-weight:700;margin-bottom:10px;color:#94a3b8;">🛡 三层隔离防护</div>
+      <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
+        <div style="background:rgba(59,130,246,.2);border:1px solid rgba(59,130,246,.4);border-radius:6px;padding:10px 14px;text-align:center;">
+          <div style="font-weight:700;color:#60a5fa;">① NTFS 簇分配</div>
+          <div style="color:#94a3b8;font-size:11px;">文件预分配后，NTFS 将</div>
+          <div style="color:#94a3b8;font-size:11px;">这些簇标记为"已占用"</div>
+          <div style="color:#94a3b8;font-size:11px;">→ 其他文件无法使用</div>
+        </div>
+        <div style="color:#475569;display:flex;align-items:center;font-size:18px;">+</div>
+        <div style="background:rgba(16,185,129,.2);border:1px solid rgba(16,185,129,.4);border-radius:6px;padding:10px 14px;text-align:center;">
+          <div style="font-weight:700;color:#34d399;">② dwShareMode=0</div>
+          <div style="color:#94a3b8;font-size:11px;">打开文件时禁止共享</div>
+          <div style="color:#94a3b8;font-size:11px;">→ 其他进程打不开此文件</div>
+        </div>
+        <div style="color:#475569;display:flex;align-items:center;font-size:18px;">+</div>
+        <div style="background:rgba(245,158,11,.2);border:1px solid rgba(245,158,11,.4);border-radius:6px;padding:10px 14px;text-align:center;">
+          <div style="font-weight:700;color:#fbbf24;">③ LockFileEx</div>
+          <div style="color:#94a3b8;font-size:11px;">锁定文件全部字节范围</div>
+          <div style="color:#94a3b8;font-size:11px;">→ 进程内额外防护层</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="vis-controls">
+      <button class="primary-btn" onclick="defragSim.run()">▶ 模拟启动整理流程</button>
+      <button onclick="defragSim.reset()">重置磁盘状态</button>
+      <span class="vis-info" id="defrag-info"></span>
+    </div>
+    <div class="note">
+      <strong>HDD 防碎片核心逻辑：</strong>启动时一次性预分配整个文件 → NTFS 尽力分配连续簇 → 验证 extent 数量 → 超标则 FSCTL_MOVE_FILE 整理。
+      此后文件物理布局永不变化，写入没有寻道惩罚。注意：SSD 无物理磁头，但逻辑 extent 数量仍是衡量碎片化的有效指标。
+    </div>
+  </div>
+
+  <h3>📌 一图胜千言：传统 vs 本方案</h3>
+  <table>
+    <tr><th></th><th>传统（每图一个文件）</th><th>本方案（预分配环形缓冲区）</th></tr>
+    <tr>
+      <td><strong>文件数量</strong></td>
+      <td>10000 个小文件满天飞</td>
+      <td><span class="badge badge-ok">1 个大文件</span></td>
+    </tr>
+    <tr>
+      <td><strong>磁盘碎片</strong></td>
+      <td><span class="badge badge-warn">日益严重</span></td>
+      <td><span class="badge badge-ok">零碎片</span></td>
+    </tr>
+    <tr>
+      <td><strong>写入速度</strong></td>
+      <td>越来越慢（破碎片拖累）</td>
+      <td><span class="badge badge-ok">始终恒定</span></td>
+    </tr>
+    <tr>
+      <td><strong>删除旧数据</strong></td>
+      <td>需要主动删除文件</td>
+      <td><span class="badge badge-ok">自动覆盖，无需关心</span></td>
+    </tr>
+    <tr>
+      <td><strong>崩溃恢复</strong></td>
+      <td>需要扫描目录逐一检查</td>
+      <td><span class="badge badge-ok">扫描 Index 区即可自愈</span></td>
+    </tr>
+    <tr>
+      <td><strong>磁盘占用</strong></td>
+      <td>不可预测（可能写满）</td>
+      <td><span class="badge badge-info">始终有界</span></td>
+    </tr>
+  </table>
+</section>
+
+<!-- ══════════════ 方案设计 ══════════════ -->
+<section id="s-startup-defrag">
+  <h2>启动时磁盘整理与空间独占</h2>
+  <div class="card">
+    <h3>为什么需要启动整理？</h3>
+    <p>单纯预分配文件，NTFS 会<strong>尽力</strong>分配连续空间，但如果磁盘已经碎片化，NTFS 可能只能给碎片化的空间。
+    因此需要在程序启动时主动分析、整理、验证，确保获得物理连续的磁盘区域。</p>
+
+    <h3>五步启动序列</h3>
+    <pre>┌──────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+│ ① 分析   │───▶│ ② 创建+预分配│───▶│ ③ 验证连续性 │───▶│ ④ 碎片整理  │───▶│ ⑤ 独占锁定  │
+│ 空闲空间 │    │   环形文件    │    │  (extent数)  │    │  (如需)     │    │  (防其他程序)│
+└──────────┘    └──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘</pre>
+
+    <h4>① 分析空闲空间 — FSCTL_GET_VOLUME_BITMAP</h4>
+    <p>向卷发送 IOCTL 获取空闲簇位图，每一位代表一个簇的分配状态（0=空闲，1=已用）。遍历位图找到最大的连续空闲区段，判断是否 ≥ 目标文件大小。</p>
+
+    <h4>② 创建文件并预分配 — SetFileValidData</h4>
+    <p>用 <code>CreateFile(dwShareMode=0)</code> 独占创建文件，然后 <code>SetFileValidData</code> 瞬时标记文件有效数据大小（需 SE_MANAGE_VOLUME_NAME 特权）。NTFS 立刻为全部字节分配物理簇。无特权时回退到 SetEndOfFile + 分块写零。</p>
+
+    <h4>③ 验证物理连续性 — FSCTL_GET_RETRIEVAL_POINTERS</h4>
+    <p>查询文件的物理 extent 布局：</p>
+    <table>
+      <tr><th>Extent 数量</th><th>评级</th><th>处理</th></tr>
+      <tr><td>= 1</td><td><span class="badge badge-ok">完美连续</span></td><td>无需处理</td></tr>
+      <tr><td>2 ~ 3</td><td><span class="badge badge-info">可接受</span></td><td>记录日志</td></tr>
+      <tr><td>≥ 4</td><td><span class="badge badge-warn">需要整理</span></td><td>触发步骤④</td></tr>
+    </table>
+
+    <h4>④ 碎片整理 — FSCTL_MOVE_FILE</h4>
+    <p>如果 extent 数量超标，向卷发送 <code>FSCTL_MOVE_FILE</code>，让 NTFS 将文件簇重新布局到连续区域。如果仍失败 → 删除文件重建。</p>
+
+    <h4>⑤ 独占锁定 — dwShareMode=0 + LockFileEx</h4>
+    <table>
+      <tr><th>层级</th><th>机制</th><th>效果</th></tr>
+      <tr><td>文件系统层</td><td>NTFS 簇分配</td><td>其他文件无法占用此区域（簇已分配给我们的文件）</td></tr>
+      <tr><td>文件句柄层</td><td><code>dwShareMode=0</code></td><td>其他进程无法打开/读取/写入/删除此文件</td></tr>
+      <tr><td>字节锁层</td><td><code>LockFileEx</code></td><td>进程内对整个文件加排他锁</td></tr>
+    </table>
+    <div class="note"><strong>关键安全保障：</strong><code>dwShareMode=0</code> 意味着即使资源管理器也无法读取此文件。而且文件已预分配，其占用的物理扇区被 NTFS 标记为已分配，其他程序根本无法写到这里。这构成了真正的空间隔离。</div>
+  </div>
+</section>
+
+<section id="s-background">
+  <h2>背景与目标</h2>
+  <div class="card">
+    <h3>场景描述</h3>
+    <p>Windows 环境下车辆缺陷检测应用，每辆车到达时需存储检测图像。图像大小在 <strong>1MB~3MB</strong> 之间波动。磁盘大部分空间用于存储图像，配置数据极少。</p>
+    <h3>核心问题</h3>
+    <p>长时间运行后<strong>磁盘碎片严重</strong> → 写入速度下降 → 影响检测效率</p>
+    <h3>目标</h3>
+    <table>
+      <tr><td>✅</td><td>通过预分配消除磁盘碎片</td></tr>
+      <tr><td>✅</td><td>环形覆盖策略，磁盘空间占用有界</td></tr>
+      <tr><td>✅</td><td>启动快速、写入高效、数据可靠</td></tr>
+      <tr><td>✅</td><td>封装为独立 C++ 组件库，不改动原有应用程序</td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="s-architecture">
+  <h2>总体架构</h2>
+  <p>核心思路：将整个图像存储抽象为一个<strong>文件级环形缓冲区（Ring Buffer File）</strong>。程序启动时在 NTFS 上一次性预分配一个大的连续文件，内部按固定块（Block）切分，写入指针循环移动，写满后自动覆盖最早的数据。</p>
+  <pre>┌──────────────────────────────────────────────────────────────┐
+│                      预分配文件 (单一文件)                     │
+├────────┬──────────┬──────────┬─────┬──────────┬──────────────┤
+│ Header │ Block 0  │ Block 1  │ ... │ Block N-1│   Index区    │
+│ (4KB)  │ (4MB)    │ (4MB)    │     │ (4MB)    │ (N×128B)     │
+└────────┴──────────┴──────────┴─────┴──────────┴──────────────┘</pre>
+  <table>
+    <tr><th>区域</th><th>大小</th><th>说明</th></tr>
+    <tr><td><strong>Header</strong></td><td>4KB</td><td>文件头，存储魔数/版本/写指针/序列号等控制信息</td></tr>
+    <tr><td><strong>Block 区</strong></td><td>N × BlockSize</td><td>每个 Block 固定大小，存一张图像的原始数据</td></tr>
+    <tr><td><strong>Index 区</strong></td><td>N × 128B</td><td>每个 Block 对应一条索引记录（车牌、时间、大小、CRC）</td></tr>
+  </table>
+  <div class="note"><strong>设计考量：</strong>Index 区放在文件末尾而非 Header 之后，因为 Block 区写入频率远高于 Index 区。将热数据放在一起，减少磁头跳跃。</div>
+</section>
+
+<section id="s-data-structures">
+  <h2>数据结构设计</h2>
+
+  <h3>文件头 (Header) — 4KB</h3>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>大小</th><th>说明</th></tr>
+    <tr><td><code>magic</code></td><td>uint32</td><td>4B</td><td>魔数 <code>0x494D4752</code> ("IMGR")，文件有效性校验</td></tr>
+    <tr><td><code>version</code></td><td>uint32</td><td>4B</td><td>版本号，当前为 1</td></tr>
+    <tr><td><code>block_size</code></td><td>uint32</td><td>4B</td><td>每个 Block 的字节数</td></tr>
+    <tr><td><code>block_count</code></td><td>uint32</td><td>4B</td><td>Block 总数量</td></tr>
+    <tr><td><code>write_sequence</code></td><td>uint64</td><td>8B</td><td>单调递增的全局写入序列号，0 = 从未写入</td></tr>
+    <tr><td><code>write_position</code></td><td>uint32</td><td>4B</td><td>下一次写入的物理 Block 索引 (0 ~ N-1)</td></tr>
+    <tr><td><code>total_bytes_written</code></td><td>uint64</td><td>8B</td><td>累计写入字节数（统计用）</td></tr>
+    <tr><td><code>reserved</code></td><td>byte[]</td><td>4060B</td><td>保留，对齐到 4KB</td></tr>
+    <tr><td><code>header_crc32</code></td><td>uint32</td><td>4B</td><td>前 4092 字节的 CRC32 校验值</td></tr>
+  </table>
+
+  <h3>索引条目 (IndexEntry) — 128B</h3>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>大小</th><th>说明</th></tr>
+    <tr><td><code>sequence</code></td><td>uint64</td><td>8B</td><td>写入时的全局序列号，0 = 该块为空</td></tr>
+    <tr><td><code>timestamp</code></td><td>FILETIME</td><td>8B</td><td>图像写入时间（UTC，100ns 粒度）</td></tr>
+    <tr><td><code>actual_size</code></td><td>uint32</td><td>4B</td><td>图像实际字节数</td></tr>
+    <tr><td><code>flags</code></td><td>uint8</td><td>1B</td><td>0x00=Empty, 0x01=Valid</td></tr>
+    <tr><td><code>vehicle_id</code></td><td>wchar_t[32]</td><td>64B</td><td>车辆/工位标识</td></tr>
+    <tr><td><code>reserved</code></td><td>byte[]</td><td>39B</td><td>预留扩展</td></tr>
+    <tr><td><code>data_crc32</code></td><td>uint32</td><td>4B</td><td>对应 Block 中图像数据的 CRC32 校验值</td></tr>
+  </table>
+
+  <h3>块大小选择</h3>
+  <div class="card">
+    <p><strong>方案 A（推荐）：</strong>固定块 = 最大图像尺寸 × 安全系数</p>
+    <p>BlockSize = 3MB × 1.2 ≈ 3.6MB → 向上取整到 <strong>4MB</strong>（与 NTFS 大簇对齐友好）</p>
+    <p>每张图像固定占用一个 Block。优点：实现极简，性能恒定。缺点：平均浪费约 30% 空间（工业场景可接受）。</p>
+  </div>
+</section>
+
+<section id="s-algorithms">
+  <h2>关键算法</h2>
+
+  <h3>初始化（首次启动 / 文件不存在）</h3>
+  <pre>Initialize(file_path, block_count, block_size):
+  1. total_size = 4KB + block_count × (block_size + 128)
+  2. 创建文件 (CreateFile)
+  3. 预分配磁盘空间（关键，防碎片）
+     → 优先: SetFileValidData (瞬时，需特权)
+     → 回退: SetFilePointerEx + 分块写零 (每次 64MB)
+  4. 初始化 Header，写入 magic / block_size / block_count
+  5. Index 区全部清零
+  6. FlushFileBuffers</pre>
+
+  <h3>写入图像</h3>
+  <pre>WriteImage(data, size, vehicle_id):
+  前提: size ≤ block_size
+
+  1. 获取写锁 (SRWLock Exclusive)
+  2. 计算偏移:
+     data_offset  = 4KB + write_position × block_size
+     index_offset = 4KB + block_count × block_size + write_position × 128
+  3. 写入图像数据 → 写入 IndexEntry → 更新 Header
+     (顺序: 数据 → 索引 → 文件头，确保崩溃可恢复)
+  4. write_position = (write_position + 1) % block_count
+  5. write_sequence += 1
+  6. FlushFileBuffers
+  7. 释放写锁</pre>
+
+  <h3>读取图像</h3>
+  <pre>ReadByVehicle(vehicle_id):
+  1. 获取读锁 (SRWLock Shared)
+  2. 遍历 Index 区 N 个条目，匹配 vehicle_id
+  3. 对每个匹配: data_offset = 4KB + block_index × block_size
+     读取 → 校验 CRC32 → 返回
+  4. 释放读锁</pre>
+
+  <h3>环形覆盖语义</h3>
+  <p>当 <code>write_position</code> 绕回时，该位置原有的 IndexEntry.sequence 非零说明有旧数据，直接覆盖即可——无需显式删除操作。数据新旧通过 sequence 大小判断：数字越大越新。</p>
+</section>
+
+<section id="s-concurrency">
+  <h2>并发模型</h2>
+  <table>
+    <tr><th>角色</th><th>操作</th><th>频率</th><th>并发策略</th></tr>
+    <tr><td>相机采集线程</td><td>写入图像</td><td>每车一次（高频）</td><td>独占写锁</td></tr>
+    <tr><td>UI 显示线程</td><td>读取最新图像</td><td>按需（中频）</td><td>共享读锁</td></tr>
+    <tr><td>分析/回放线程</td><td>按车辆 ID 读取</td><td>按需（低频）</td><td>共享读锁</td></tr>
+  </table>
+  <div class="note"><strong>推荐 SRWLock：</strong>Windows 用户态读写锁，写互斥、读共享，性能优于 Mutex。</div>
+</section>
+
+<section id="s-recovery">
+  <h2>异常恢复</h2>
+  <table>
+    <tr><th>崩溃时机</th><th>后果</th><th>恢复方式</th></tr>
+    <tr><td>写数据途中</td><td>当前 Block 数据不完整</td><td>CRC 校验失败 → 标记该 Block 为无效</td></tr>
+    <tr><td>写 Index 途中</td><td>Index 与数据不一致</td><td>以 Index 为准，数据 Block 可被重新使用</td></tr>
+    <tr><td>写 Header 途中</td><td>write_position 未更新</td><td>扫描 Index 找到最大 sequence 的位置，重建 Header</td></tr>
+  </table>
+  <h3>恢复流程（每次启动执行）</h3>
+  <pre>Recover(file_path):
+  1. 打开文件，验证 Header magic 和 CRC32
+  2. 扫描全部 Index 条目:
+     → 找到最大的 valid sequence → 重建 write_position
+  3. 遍历所有声称 Valid 的条目:
+     → 校验 data_crc32
+     → CRC 不匹配 → 标记为空 (sequence=0, flags=Empty)
+  4. 写回修正后的 Header</pre>
+</section>
+
+<section id="s-windows">
+  <h2>Windows 平台实现要点</h2>
+  <h3>预分配方式</h3>
+  <table>
+    <tr><th>方法</th><th>API</th><th>速度</th><th>要求</th></tr>
+    <tr><td>SetFileValidData</td><td><code>SetFileValidData</code></td><td>✨ 瞬时</td><td>需 SE_MANAGE_VOLUME_NAME 特权</td></tr>
+    <tr><td>SetEndOfFile + 写零</td><td><code>SetFilePointerEx</code> + <code>WriteFile</code></td><td>慢（写满全文件）</td><td>无</td></tr>
+    <tr><td>FSCTL_SET_ZERO_DATA</td><td><code>DeviceIoControl</code></td><td>中等</td><td>NTFS 稀疏文件</td></tr>
+  </table>
+  <p>推荐：先尝试 <code>SetFileValidData</code>，失败回退到分块写零（64MB Overlapped I/O）。</p>
+  <h3>防碎片验证</h3>
+  <pre>1. GetDiskFreeSpaceEx → 确认有足够连续空闲空间
+2. FSCTL_GET_RETRIEVAL_POINTERS → 验证分配后的物理连续性
+3. 定期检查文件碎片状态</pre>
+</section>
+
+<section id="s-config">
+  <h2>配置参数设计</h2>
+  <table>
+    <tr><th>参数</th><th>计算方式</th><th>示例值</th></tr>
+    <tr><td><code>block_size</code></td><td>MaxImageSize × 1.2 → 对齐到 4KB</td><td>4,194,304 (4MB)</td></tr>
+    <tr><td><code>block_count</code></td><td>AvailableDiskSpace / block_size × 保留比例</td><td>10,000</td></tr>
+    <tr><td>总文件大小</td><td>4KB + block_count × (block_size + 128)</td><td>~40GB</td></tr>
+  </table>
+  <p>磁盘 100GB → 80GB 可用 → block_count = 80GB / 4MB = <strong>20,000 块</strong>（存储最近 20,000 辆车的图像）</p>
+</section>
+
+<section id="s-integration">
+  <h2>系统集成</h2>
+  <pre>┌──────────────────────────────────────────────┐
+│                 应用层 (Application)          │
+│  ┌─────────────┐ ┌──────────┐ ┌───────────┐ │
+│  │ 相机采集模块 │ │ UI展示   │ │ 分析模块  │ │
+│  └──────┬──────┘ └────┬─────┘ └─────┬─────┘ │
+├─────────┼─────────────┼─────────────┼───────┤
+│         ▼             ▼             ▼       │
+│  ┌──────────────────────────────────────┐   │
+│  │     ImageRingBuffer (存储抽象层)      │   │
+│  └────────────────┬─────────────────────┘   │
+│  ┌────────────────▼─────────────────────┐   │
+│  │     RingBufferFile (文件操作层)       │   │
+│  └────────────────┬─────────────────────┘   │
+│  ┌────────────────▼─────────────────────┐   │
+│  │     Win32 File API                   │   │
+│  └──────────────────────────────────────┘   │
+└──────────────────────────────────────────────┘</pre>
+  <p>与现有系统的接口简洁：启动时 <code>Open</code>，来车时 <code>Write</code>，检索时 <code>ReadByVehicle</code>，关闭时 <code>Close</code>。原有应用只需 5 行代码集成。</p>
+</section>
+
+<section id="s-comparison">
+  <h2>优缺点与对比</h2>
+  <h3>优点</h3>
+  <table>
+    <tr><td>⭐ 零碎片</td><td>一次性预分配，文件物理存储不再变化</td></tr>
+    <tr><td>⭐ 性能可预测</td><td>每次写入固定偏移 WriteFile，恒定 O(1)</td></tr>
+    <tr><td>⭐ 空间有界</td><td>不会意外写满磁盘</td></tr>
+    <tr><td>⭐ 崩溃可恢复</td><td>sequence + CRC 自愈机制</td></tr>
+  </table>
+  <h3>与替代方案对比</h3>
+  <table>
+    <tr><th>维度</th><th>本方案（预分配环形文件）</th><th>传统（每图一个文件）</th><th>数据库 BLOB</th></tr>
+    <tr><td>磁盘碎片</td><td><span class="stars">★★★★★</span> 零碎片</td><td><span class="stars">★☆☆☆☆</span> 极易碎片</td><td><span class="stars">★★★☆☆</span> DB 管理</td></tr>
+    <tr><td>写入性能</td><td><span class="stars">★★★★★</span> 固定偏移 O(1)</td><td><span class="stars">★★☆☆☆</span> 文件创建开销大</td><td><span class="stars">★★★☆☆</span> B+Tree 写放大</td></tr>
+    <tr><td>空间利用率</td><td><span class="stars">★★★☆☆</span> ~70%</td><td><span class="stars">★★★★★</span> ~99%</td><td><span class="stars">★★★☆☆</span></td></tr>
+    <tr><td>实现复杂度</td><td><span class="stars">★★★☆☆</span> 中等</td><td><span class="stars">★★☆☆☆</span> 简单</td><td><span class="stars">★★★★☆</span> 需引入 DB</td></tr>
+    <tr><td>崩溃恢复</td><td><span class="stars">★★★★☆</span> 自愈</td><td><span class="stars">★★☆☆☆</span> 需单独处理</td><td><span class="stars">★★★★★</span> DB 事务</td></tr>
+  </table>
+</section>
+
+<!-- ══════════════ C++ 组件库接口 ══════════════ -->
+<section id="s-api-types">
+  <h2>公共类型定义</h2>
+  <pre>// ImageRingBufferTypes.h
+#pragma once
+#include &lt;cstdint&gt;
+
+struct RingBufferInitParam {
+    wchar_t  drive_letter;           // 磁盘盘符，如 L'C' 或 L'D'（组件在根目录创建数据文件）
+    uint32_t block_size;             // 每个 Block 字节数 (例: 4MB = 4194304)
+    uint32_t block_count;            // Block 总数量 (例: 10000)
+    uint32_t max_extents_accepted;   // 可接受的最大 extent 数量 (默认 3)
+};struct ImageInfo {
+    uint64_t sequence;          // 全局写入序列号
+    uint64_t timestamp;         // FILETIME 写入时间
+    uint32_t actual_size;       // 图像实际字节数
+    wchar_t  vehicle_id[32];    // 车辆标识
+    uint8_t* data;              // 图像数据（组件分配，调用方 FreeImage 释放）
+};
+
+struct RingBufferStats {
+    uint32_t block_size, block_count;
+    uint32_t used_blocks, free_blocks;
+    uint64_t write_sequence, write_position;
+    uint64_t total_bytes_written, total_file_size;
+    uint64_t oldest_sequence, newest_sequence;
+    bool     is_healthy;
+    uint32_t extent_count;
+    bool     is_contiguous;
+    uint64_t largest_free_extent;
+};
+
+// 错误码
+#define RBF_OK                  0
+#define RBF_ERR_WIN32           1   // GetLastError() 获详情
+#define RBF_ERR_INVALID_PARAM   2
+#define RBF_ERR_IMAGE_TOO_LARGE 3
+#define RBF_ERR_FILE_CORRUPT    4
+#define RBF_ERR_DISK_FULL       5
+#define RBF_ERR_NOT_INITIALIZED 6
+#define RBF_ERR_NOT_FOUND       7
+// 磁盘碎片整理失败（文件 extent 数超过阈值且无法整理）
+#define RBF_ERR_DEFRAG_FAILED   8
+// 物理连续性不达标（磁盘碎片严重，建议手动整理）
+#define RBF_ERR_TOO_FRAGMENTED  9
+// 文件已被其他进程锁定（已有实例在运行）
+#define RBF_ERR_ALREADY_LOCKED  10</pre>
+</section>
+
+<section id="s-api-class">
+  <h2>ImageRingBuffer 接口</h2>
+  <pre>// ImageRingBuffer.h
+#pragma once
+#include "ImageRingBufferTypes.h"
+#include &lt;memory&gt;
+
+class ImageRingBuffer {
+public:
+    // ═══ 生命周期 ═══
+    ImageRingBuffer();
+    ~ImageRingBuffer();                          // 自动调用 Close()
+    // 禁止拷贝和移动
+    ImageRingBuffer(const ImageRingBuffer&) = delete;
+    ImageRingBuffer& operator=(const ImageRingBuffer&) = delete;
+    ImageRingBuffer(ImageRingBuffer&&) = delete;
+    ImageRingBuffer& operator=(ImageRingBuffer&&) = delete;
+
+    // ═══ 初始化与关闭 ═══
+    /// @brief 初始化环形缓冲区组件
+    /// @param param  初始化参数（盘符 / block大小 / block个数 / 连续性阈值）
+    /// @return RBF_OK 成功，其他为错误码
+    /// @note  组件在指定盘符根目录自动创建数据文件
+    ///        首次调用：分析空闲空间 → 预分配 → 验证物理连续性 → 必要时 FSCTL_MOVE_FILE → 独占锁定
+    ///        初始化成功后，该磁盘区域被 NTFS 标记为已分配 + 文件句柄独占，其他程序无法使用
+    ///        HDD 典型耗时：40GB 预分配约 2~3 分钟，碎片整理额外 1~5 分钟
+    uint32_t Init(const RingBufferInitParam& param);
+
+    /// @brief 关闭环形缓冲区，释放文件锁，确保数据落盘
+    /// @note  析构函数自动调用。关闭后可再次 Init 重新初始化
+    void Shutdown();
+
+    // ═══ 写入 ═══
+    uint32_t Write(const void*    data,
+                   uint32_t      size,
+                   const wchar_t* vehicle_id,    // 可选 nullptr
+                   uint64_t*     out_sequence = nullptr);
+
+    // ═══ 读取 ═══
+    int32_t  ReadByVehicle(const wchar_t* vehicle_id,
+                           ImageInfo*     results,
+                           int32_t        max_results);   // 返回实际数量
+    int32_t  ReadLatest(int32_t    count,
+                        ImageInfo* results,
+                        int32_t    max_results);
+    uint32_t ReadBySequence(uint64_t  sequence,
+                            void*     buffer,
+                            uint32_t  buffer_size,
+                            uint32_t* out_actual_size);
+
+    // ═══ 统计与工具 ═══
+    void     GetStats(RingBufferStats* out_stats) const;
+    static void      FreeImage(ImageInfo* image);
+    static bool      ValidateFile(const wchar_t* file_path);
+    static uint64_t  CalculateFileSize(uint32_t block_size, uint32_t block_count);
+
+private:
+    class Impl;   // 前向声明，Win32 句柄/SRWLock/内部结构全部隐藏
+    std::unique_ptr&lt;Impl&gt; impl_;
+};</pre>
+</section>
+
+<section id="s-api-usage">
+  <h2>使用示例</h2>
+  <pre>// ═══ 应用启动 ═══
+ImageRingBuffer storage;
+RingBufferInitParam param = {};
+param.drive_letter         = L'D';             // 盘符：在 D 盘创建数据文件
+param.block_size           = 4 * 1024 * 1024;  // 4MB per block
+param.block_count          = 10000;            // 10000 blocks ≈ 40GB
+param.max_extents_accepted = 3;                // extent > 3 则触发强制整理
+
+uint32_t err = storage.Init(param);
+if (err != RBF_OK) {
+    // Init 失败意味着无法获得连续独占区域，不应继续运行
+    // RBF_ERR_TOO_FRAGMENTED → HDD 碎片严重，需要手动整理后再启动
+    // RBF_ERR_ALREADY_LOCKED → 已有实例在运行
+    // RBF_ERR_DEFRAG_FAILED  → FSCTL_MOVE_FILE 失败
+    // RBF_ERR_DISK_FULL       → 磁盘空间不足
+    return err;
+}
+
+// 启动后可查询物理连续性
+RingBufferStats stats;
+storage.GetStats(&stats);
+// stats.extent_count  → 文件物理 extent 数量（HDD 上 1 = 无寻道惩罚）
+// stats.is_contiguous → 是否完全连续
+
+</pre>
+// ========== 碎片演示 ==========
+const fragSim = {
+  blocks: [], BLOCK_COUNT: 60,
+  init() {
+    this.blocks = [];
+    for (let i = 0; i < this.BLOCK_COUNT; i++) this.blocks.push({ free: true, id: 0 });
+    this.nextId = 1;
+    this.render();
+  },
+  addRandom() {
+    const size = 1 + Math.floor(Math.random() * 4); // 1-4 blocks
+    // 找连续空闲
+    for (let i = 0; i <= this.BLOCK_COUNT - size; i++) {
+      let ok = true;
+      for (let j = 0; j < size; j++) { if (!this.blocks[i+j].free) { ok = false; break; } }
+      if (ok) {
+        for (let j = 0; j < size; j++) { this.blocks[i+j].free = false; this.blocks[i+j].id = this.nextId; }
+        this.nextId++;
+        this.render();
+        return;
+      }
+    }
+    // 无连续空间 → 模拟碎片存放（分开存）
+    alert('没有连续空间了！新文件被"撕碎"到多个位置 → 这就是磁盘碎片！');
+    let remaining = size;
+    for (let i = 0; i < this.BLOCK_COUNT && remaining > 0; i++) {
+      if (this.blocks[i].free) {
+        this.blocks[i].free = false;
+        this.blocks[i].id = this.nextId;
+        remaining--;
+      }
+    }
+    this.nextId++;
+    this.render();
+  },
+  deleteRandom() {
+    const used = this.blocks.filter(b => !b.free);
+    if (used.length === 0) return;
+    const targetId = used[Math.floor(Math.random() * used.length)].id;
+    for (let b of this.blocks) { if (b.id === targetId) { b.free = true; b.id = 0; } }
+    this.render();
+  },
+  defrag() {
+    // 简单模拟：把使用中的块移到前面
+    const usedBlocks = [];
+    for (let b of this.blocks) { if (!b.free) usedBlocks.push({...b}); }
+    for (let i = 0; i < this.BLOCK_COUNT; i++) {
+      if (i < usedBlocks.length) this.blocks[i] = usedBlocks[i];
+      else this.blocks[i] = { free: true, id: 0 };
+    }
+    this.render();
+  },
+  reset() { this.init(); },
+  render() {
+    const grid = document.getElementById('grid-frag');
+    const info = document.getElementById('frag-info');
+    const used = this.blocks.filter(b => !b.free).length;
+    // count fragments: transitions from used to free
+    let fragments = 0;
+    for (let i = 1; i < this.BLOCK_COUNT; i++) {
+      if (this.blocks[i-1].free !== this.blocks[i].free) fragments++;
+    }
+    let html = '';
+    for (let i = 0; i < this.BLOCK_COUNT; i++) {
+      const b = this.blocks[i];
+      let cls = b.free ? 'empty' : 'used';
+      let label = b.free ? '' : b.id;
+      // detect fragmented (non-contiguous same id)
+      if (!b.free && i > 0 && !this.blocks[i-1].free && this.blocks[i-1].id !== b.id && this.blocks[i].id !== 0) {
+        // only show fragmentation pattern if gaps exist
+      }
+      // Show fragmentation pattern for scattered files
+      if (!b.free && b.id > 0) {
+        let sameCount = 0;
+        for (let j = 0; j < this.BLOCK_COUNT; j++) { if (this.blocks[j].id === b.id) sameCount++; }
+        if (sameCount > 0) {
+          // check contiguity
+          let contiguous = true;
+          let first = -1;
+          for (let j = 0; j < this.BLOCK_COUNT; j++) {
+            if (this.blocks[j].id === b.id) {
+              if (first < 0) first = j;
+              else if (j !== first + 1 && this.blocks[j-1].id !== b.id) contiguous = false;
+            }
+          }
+          if (!contiguous) cls = 'fragmented';
+        }
+      }
+      html += `<div class="disk-block ${cls}" style="height:${b.free ? 20 : 20 + (b.id % 5) * 6}px" title="${b.free ? '空闲' : '文件#' + b.id}">${label}</div>`;
+    }
+    grid.innerHTML = html;
+    info.textContent = `已用 ${used}/${this.BLOCK_COUNT} 块 · 碎片间隙 ${fragments} 处 · 利用率 ${Math.round(used/this.BLOCK_COUNT*100)}%`;
+  }
+};
+
+// ========== 环形缓冲区演示 ==========
+const ringSim = {
+  BLOCK_COUNT: 40, writePos: 0, sequence: 0, blocks: [],
+  init() {
+    this.blocks = [];
+    for (let i = 0; i < this.BLOCK_COUNT; i++) this.blocks.push({ sequence: 0, empty: true, overwritten: false });
+    this.writePos = 0; this.sequence = 0;
+    this.draw();
+  },
+  writeImage() {
+    const prev = this.blocks[this.writePos];
+    const wasOccupied = !prev.empty;
+    this.sequence++;
+    this.blocks[this.writePos] = { sequence: this.sequence, empty: false, overwritten: wasOccupied };
+    this.writePos = (this.writePos + 1) % this.BLOCK_COUNT;
+    this.draw();
+    // clear overwrite highlight after animation
+    setTimeout(() => {
+      for (let b of this.blocks) b.overwritten = false;
+      this.draw();
+    }, 600);
+  },
+  writeBatch(n) {
+    for (let i = 0; i < n; i++) this.writeImage();
+  },
+  reset() { this.init(); },
+  draw() {
+    const canvas = document.getElementById('ring-canvas');
+    if (!canvas) return;
+    const w = canvas.clientWidth;
+    if (w > 0) canvas.width = w;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = 320;
+    const cols = 10; const rows = Math.ceil(this.BLOCK_COUNT / cols);
+    const cellW = (W - 80) / cols; const cellH = 20;
+    const startX = 40; const startY = 40;
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.font = '12px -apple-system, "Microsoft YaHei", sans-serif';
+
+    for (let i = 0; i < this.BLOCK_COUNT; i++) {
+      const col = i % cols; const row = Math.floor(i / cols);
+      const x = startX + col * (cellW + 2);
+      const y = startY + row * (cellH + 6);
+      const b = this.blocks[i];
+
+      ctx.fillStyle = b.empty ? '#e2e8f0' : (b.overwritten ? '#f59e0b' : '#3b82f6');
+      ctx.strokeStyle = b.empty ? '#cbd5e1' : (b.overwritten ? '#b45309' : '#1d4ed8');
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(x, y, cellW, cellH, 3); ctx.fill(); ctx.stroke();
+
+      if (this.writePos === i) {
+        ctx.strokeStyle = '#ef4444';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.roundRect(x-2, y-2, cellW+4, cellH+4, 5); ctx.stroke();
+      }
+
+      if (!b.empty) {
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(b.sequence, x + cellW/2, y + cellH/2 + 3);
+      }
+    }
+
+    // Legend
+    const legendY = startY + rows * (cellH + 6) + 20;
+    ctx.fillStyle = '#475569';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(`写入指针: Block #${this.writePos}  |  下次序列号: ${this.sequence + 1}  |  已写: ${this.sequence} 张`, startX, legendY);
+
+    const used = this.blocks.filter(b => !b.empty).length;
+    const pct = Math.round(used / this.BLOCK_COUNT * 100);
+    ctx.fillText(`填充率: ${pct}%`, startX + 500, legendY);
+
+    document.getElementById('ring-info').textContent =
+      `第 ${this.sequence} 次写入 → Block #${(this.writePos - 1 + this.BLOCK_COUNT) % this.BLOCK_COUNT}  |  填充 ${pct}%  |  ${pct >= 100 ? '⚠ 下一张将覆盖最早数据' : ''}`;
+  }
+};
+
+// ========== 文件布局演示 ==========
+function drawLayout() {
+  const canvas = document.getElementById('layout-canvas');
+  if (!canvas) return;
+  const w = canvas.clientWidth;
+  if (w > 0) canvas.width = w;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width;
+  const H = 180;
+  ctx.clearRect(0, 0, W, H);
+
+  const headerW = 60;
+  const blockAreaW = W - 100 - headerW;
+  const indexW = 50;
+  const y = 30;
+  const h = 80;
+
+  // Header
+  ctx.fillStyle = '#0f172a'; ctx.fillRect(20, y, headerW, h);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('Header', 20 + headerW/2, y + h/2);
+  ctx.fillText('4KB', 20 + headerW/2, y + h/2 + 18);
+
+  // Block area
+  const blockX = 20 + headerW + 10;
+  ctx.fillStyle = '#dbeafe'; ctx.fillRect(blockX, y, blockAreaW, h);
+  ctx.strokeStyle = '#3b82f6'; ctx.lineWidth = 1;
+  for (let i = 0; i < 10; i++) {
+    const bx = blockX + i * (blockAreaW / 10);
+    ctx.strokeRect(bx, y, blockAreaW / 10, h);
+  }
+  ctx.fillStyle = '#1e40af'; ctx.textAlign = 'center';
+  ctx.fillText('Block 区 (N × BlockSize)', blockX + blockAreaW/2, y + h/2);
+  ctx.fillText('每块存一张图像', blockX + blockAreaW/2, y + h/2 + 18);
+
+  // Index area
+  const idxX = blockX + blockAreaW + 10;
+  ctx.fillStyle = '#dcfce7'; ctx.fillRect(idxX, y, indexW, h);
+  ctx.fillStyle = '#166534'; ctx.textAlign = 'center';
+  ctx.fillText('Index', idxX + indexW/2, y + h/2 - 5);
+  ctx.fillText('区', idxX + indexW/2, y + h/2 + 18);
+
+  // Description below
+  ctx.fillStyle = '#64748b'; ctx.font = '11px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('↑ 一次性预分配整个文件，NTFS 会尽量分配连续的物理扇区，之后不再变动 → 零碎片', 20, y + h + 30);
+  ctx.fillText('↑ 写入顺序：图像数据 → Index → Header（这个顺序保证崩溃后能恢复）', 20, y + h + 48);
+}
+setTimeout(drawLayout, 100);
+window.addEventListener('resize', () => { ringSim.draw(); drawLayout(); wrapSim.draw(); });
+
+// ========== 写入流程动画 (DOM 实现) ==========
+const flowSim = (function() {
+  const STEP_NAMES = ['获取写锁', '计算偏移', '写入Block', '写入Index', '更新Header', 'Flush完成'];
+  const MSGS = ['', '① 获取写锁 (SRWLock Exclusive)', '② 计算 Block 偏移', '③ 写入图像数据到 Block 区', '④ 写入 IndexEntry (车牌/时间/大小/CRC)', '⑤ 更新 Header (write_position++, sequence++)', '⑥ FlushFileBuffers → 释放锁 → 完成！'];
+  const DETAILS = ['',
+    '🔒 AcquireSRWLockExclusive(&rwLock);\n→ 阻塞其他写入线程，共享读仍可并发',
+    '📐 data_offset  = HEADER_SIZE + pos × blockSize\n    = 4096 + 3 × 4194304 = 12587008',
+    '💾 WriteFile(hFile, imgBuf, actualSize, ...);\n→ 像素数据从采集 buffer 直达磁盘 Block',
+    '📋 entry = {seq, time, size, plate, crc};\nWriteFile(hFile, &entry, 128);',
+    '📝 header.position = (pos+1) % N;\nheader.sequence += 1;\nWriteFile(hFile, &header, 4096);',
+    '✅ FlushFileBuffers(hFile);\nReleaseSRWLockExclusive(&rwLock);\n→ 数据安全落盘，通知 UI 刷新画面'
+  ];
+  var step = 0, $btn, $info, $detail, $steps, $lines;
+  function render() {
+    if (!$steps) return;
+    $steps.forEach(function(el, i) {
+      el.classList.remove('active', 'done');
+      if (step > 0 && i < step - 1) el.classList.add('done');
+      else if (step > 0 && i === step - 1) el.classList.add('active');
+    });
+    $lines.forEach(function(el, i) {
+      el.classList.toggle('done', step > 0 && i < step - 1);
+    });
+    if ($detail) $detail.textContent = step >= 1 ? DETAILS[step] : '点击下方「▶ 逐步演示写入流程」按钮，观看完整存储过程';
+  }
+  function stepFwd() {
+    step = step >= 6 ? 1 : step + 1;
+    render();
+    if ($btn) $btn.textContent = step === 6 ? '🔄 重新演示' : '▶ 下一步';
+    if ($info) $info.textContent = MSGS[step];
+  }
+  function reset() {
+    step = 0; render();
+    if ($btn) $btn.textContent = '▶ 逐步演示写入流程';
+    if ($info) $info.textContent = '点击按钮逐步观看写入流程';
+  }
+  return {
+    init: function() {
+      $btn = document.getElementById('btn-step-write');
+      $info = document.getElementById('flow-info');
+      $detail = document.getElementById('flow-detail');
+      $steps = document.querySelectorAll('#flow-dom .flow-step-circle');
+      $lines = document.querySelectorAll('#flow-dom .flow-step-line');
+      if ($btn) $btn.addEventListener('click', stepFwd);
+      var rstBtn = document.getElementById('btn-step-reset');
+      if (rstBtn) rstBtn.addEventListener('click', reset);
+      render();
+    },
+    step: stepFwd,
+    reset: reset
+  };
+})();
+// ========== 环形覆盖演示 ==========
+const wrapSim = {
+  BLOCK_COUNT: 24, writePos: 0, sequence: 0, blocks: [],
+  init() {
+    this.blocks = [];
+    // Pre-fill to near-full state
+    for (let i = 0; i < this.BLOCK_COUNT; i++) {
+      this.blocks.push({ sequence: i + 1, empty: false, overwritten: false });
+    }
+    this.sequence = this.BLOCK_COUNT;
+    this.writePos = 0; // ready to wrap
+    this.draw();
+  },
+  step() {
+    this.sequence++;
+    const overwritten = !this.blocks[this.writePos].empty;
+    this.blocks[this.writePos] = { sequence: this.sequence, empty: false, overwritten: overwritten };
+    this.writePos = (this.writePos + 1) % this.BLOCK_COUNT;
+    this.draw();
+    setTimeout(() => { for (let b of this.blocks) b.overwritten = false; this.draw(); }, 600);
+  },
+  writeMany(n) { for (let i = 0; i < n; i++) this.step(); },
+  reset() { this.init(); },
+  draw() {
+    const canvas = document.getElementById('wrap-canvas');
+    if (!canvas) return;
+    const w = canvas.clientWidth;
+    if (w > 0) canvas.width = w;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const H = 200;
+    ctx.clearRect(0, 0, W, H);
+    const cellW = (W - 60) / this.BLOCK_COUNT;
+    const startX = 30; const startY = 40; const cellH = 30;
+
+    for (let i = 0; i < this.BLOCK_COUNT; i++) {
+      const x = startX + i * (cellW + 1);
+      const b = this.blocks[i];
+      let color = '#3b82f6';
+      if (b.overwritten) color = '#f59e0b';
+      ctx.fillStyle = color;
+      ctx.fillRect(x, startY, cellW, cellH);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.strokeRect(x, startY, cellW, cellH);
+
+      // Write pointer indicator
+      if (this.writePos === i) {
+        ctx.fillStyle = '#ef4444';
+        ctx.beginPath(); ctx.moveTo(x + cellW/2, startY - 8); ctx.lineTo(x + cellW/2 - 5, startY - 2); ctx.lineTo(x + cellW/2 + 5, startY - 2); ctx.closePath(); ctx.fill();
+      }
+
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
+      ctx.fillText(b.sequence, x + cellW/2, startY + cellH/2 + 3);
+    }
+
+    ctx.fillStyle = '#475569'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
+    const oldest = Math.min(...this.blocks.map(b => b.sequence));
+    const newest = Math.max(...this.blocks.map(b => b.sequence));
+    ctx.fillText(`最旧数据 seq=${oldest}  |  最新数据 seq=${newest}  |  已写满，每次写入覆盖最旧`, startX, startY + cellH + 30);
+    document.getElementById('wrap-info').textContent =
+      `第 ${this.sequence} 次写入 → 覆盖了 Block #${(this.writePos - 1 + this.BLOCK_COUNT) % this.BLOCK_COUNT} (原 seq=${this.sequence - this.BLOCK_COUNT})`;
+  }
+};
+
+// ========== 启动整理 + 空间独占演示 ==========
+const defragSim = {
+  totalExtents: 40, extents: [], ourFileExtentIdx: -1, ourFileExtents: 1,
+  init() {
+    this.extents = [];
+    // 随机生成碎片化的 extents
+    let pos = 0;
+    for (let i = 0; i < this.totalExtents; i++) {
+      const isFree = Math.random() < 0.35;
+      const size = 1 + Math.floor(Math.random() * 4);
+      this.extents.push({ free: isFree, size: size, id: isFree ? 0 : (100 + i), fragmented: !isFree && Math.random() < 0.6 });
+      pos += size;
+    }
+    this.ourFileExtentIdx = -1;
+    this.ourFileExtents = 1 + Math.floor(Math.random() * 6); // 1-6 extents, >3 = needs defrag
+    this.render();
+    document.getElementById('defrag-info').textContent = '磁盘当前碎片化状态，点击按钮模拟启动整理';
+  },
+  run() {
+    const info = document.getElementById('defrag-info');
+    const step1 = document.getElementById('defrag-step1');
+    const step2 = document.getElementById('defrag-step2');
+    const step3 = document.getElementById('defrag-step3');
+    const info1 = document.getElementById('defrag-info-1');
+    const info2 = document.getElementById('defrag-info-2');
+    const info3 = document.getElementById('defrag-info-3');
+
+    // Reset
+    [step1, step2, step3].forEach(s => { s.style.borderColor = '#e2e8f0'; s.style.background = '#f8fafc'; });
+    info1.textContent = ''; info2.textContent = ''; info3.textContent = '';
+
+    // Phase 1
+    step1.style.borderColor = '#3b82f6'; step1.style.background = '#eff6ff';
+    info1.innerHTML = '正在扫描...';
+    info.textContent = '① 分析空闲位图中...';
+    setTimeout(() => {
+      const freeExtents = this.extents.filter(e => e.free);
+      const largest = freeExtents.reduce((max, e) => Math.max(max, e.size), 0);
+      info1.innerHTML = '最大连续空闲: ' + largest + ' 块<br>' + (largest >= 10 ? '✅ 空间够用' : '⚠ 空间不足');
+      info.textContent = '① 完成 → ② 预分配文件中...';
+
+      // Phase 2
+      step2.style.borderColor = '#3b82f6'; step2.style.background = '#eff6ff';
+      info2.innerHTML = '预分配中...';
+      setTimeout(() => {
+        // Merge some free extents for our file
+        let allocated = 0;
+        const needed = 10;
+        for (let i = 0; i < this.extents.length && allocated < needed; i++) {
+          if (this.extents[i].free) {
+            this.extents[i].free = false;
+            this.extents[i].id = 999;
+            this.extents[i].fragmented = false;
+            allocated += this.extents[i].size;
+            this.extents[i].size = Math.min(this.extents[i].size, needed - allocated + 1);
+          }
+        }
+        this.render();
+
+        if (this.ourFileExtents <= 3) {
+          info2.innerHTML = 'extent 数: ' + this.ourFileExtents + ' ✅ 连续';
+          info.textContent = '② 验证通过 → ③ 锁定文件中...';
+        } else {
+          info2.innerHTML = 'extent 数: ' + this.ourFileExtents + ' ⚠ 需整理';
+          info.textContent = '② 碎片超标 → 触发 FSCTL_MOVE_FILE...';
+          // Simulate defrag
+          setTimeout(() => {
+            this.ourFileExtents = 1;
+            info2.innerHTML = 'extent 数: 1 ✅ 已整理';
+            info.textContent = '整理完成 → ③ 锁定文件中...';
+            this.render();
+            setTimeout(phase3, 600);
+          }, 800);
+          return;
+        }
+        setTimeout(phase3, 600);
+        function phase3() {
+          step3.style.borderColor = '#10b981'; step3.style.background = '#f0fdf4';
+          info3.innerHTML = '✅ 独占锁已获取<br>dwShareMode=0';
+          info.textContent = '✅ 启动完成 — 文件连续存储，其他程序无法访问';
+        }
+      }, 500);
+    }, 400);
+  },
+  reset() { this.init(); },
+  render() {
+    const container = document.getElementById('defrag-disk-viz');
+    let html = '';
+    for (let e of this.extents) {
+      let bg = '#e2e8f0';
+      if (!e.free) bg = e.id === 999 ? '#3b82f6' : (e.fragmented ? '#ef4444' : '#94a3b8');
+      html += '<div style="width:' + (e.size * 12 + 2) + 'px;height:24px;background:' + bg + ';border-radius:2px;font-size:8px;color:#fff;text-align:center;line-height:24px;margin:1px;" title="' + (e.free ? '空闲' : (e.id === 999 ? '环形文件' : '文件#' + e.id)) + '">' + (e.free ? '' : (e.id === 999 ? '●' : '·')) + '</div>';
+    }
+    container.innerHTML = html;
+  }
+};
+defragSim.init();
+
+// ========== init all ==========
+fragSim.init();
+ringSim.init();
+wrapSim.init();
+drawLayout();
+flowSim.init();
+
+// ========== 平滑滚动 ==========
+document.querySelectorAll('nav a').forEach(a => {
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    const id = a.getAttribute('href').substring(1);
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.querySelectorAll('nav a').forEach(x => x.classList.remove('active'));
+    a.classList.add('active');
+  });
+});
+
+// Active nav on scroll
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
+      const link = document.querySelector(`nav a[href="#${entry.target.id}"]`);
+      if (link) link.classList.add('active');
+    }
+  });
+}, { rootMargin: '-20% 0px -70% 0px' });
+document.querySelectorAll('section[id]').forEach(s => observer.observe(s));
+</script>
+</body>
+</html>

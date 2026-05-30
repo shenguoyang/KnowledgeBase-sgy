@@ -1,0 +1,2065 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IO 原理 — Windows 存储栈全景解析</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --dim: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --orange: #d2991d;
+    --red: #f85149;
+    --purple: #a371f7;
+    --cyan: #39c5cf;
+    --user-color: #58a6ff;
+    --kernel-color: #a371f7;
+    --fs-color: #3fb950;
+    --vol-color: #d2991d;
+    --hw-color: #f85149;
+    --cache-color: #39c5cf;
+    --filter-color: #f0883e;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: 'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  /* ── header ── */
+  .hero {
+    text-align:center;
+    padding: 60px 20px 40px;
+    border-bottom: 1px solid var(--border);
+    position:relative;
+    overflow:hidden;
+  }
+  .hero::before {
+    content:''; position:absolute;
+    top:0;left:0;right:0;bottom:0;
+    background: radial-gradient(ellipse at 50% 0%, rgba(88,166,255,0.08) 0%, transparent 70%);
+  }
+  .hero h1 { font-size:2.4em; font-weight:700; letter-spacing:-0.5px; position:relative; }
+  .hero h1 span { color:var(--accent); }
+  .hero p { color:var(--dim); margin-top: 8px; font-size: 1.05em; position:relative; }
+
+  /* ── nav tabs ── */
+  .nav-bar {
+    display:flex; justify-content:center; gap:4px;
+    padding:16px 20px; position:sticky; top:0; z-index:100;
+    background: rgba(13,17,23,0.92); backdrop-filter:blur(12px);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-bar button {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--dim); padding: 8px 18px; border-radius: 6px;
+    font-size: 0.9em; cursor:pointer; transition: all 0.2s;
+    font-family: inherit;
+  }
+  .nav-bar button.active, .nav-bar button:hover {
+    background: var(--surface); color: var(--text);
+    border-color: var(--accent);
+  }
+  .nav-bar button.active { box-shadow: 0 0 0 1px var(--accent); }
+
+  /* ── sections ── */
+  .section { display:none; max-width:1200px; margin:0 auto; padding:32px 20px; }
+  .section.active { display:block; }
+
+  /* ── glossary grid ── */
+  .glossary-grid {
+    display:grid; grid-template-columns: repeat(auto-fill, minmax(340px,1fr));
+    gap: 16px;
+  }
+  .term-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius:10px; padding:20px;
+    transition: all 0.25s;
+    position:relative; overflow:hidden;
+  }
+  .term-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  }
+  .term-card .icon {
+    font-size:1.5em; margin-bottom:8px;
+  }
+  .term-card h3 { font-size:1.05em; margin-bottom:6px; }
+  .term-card p { color: var(--dim); font-size:0.9em; }
+  .term-card .en { color: var(--accent); font-size:0.82em; margin-bottom:4px; display:block; }
+
+  /* ── flow container ── */
+  .flow-wrapper {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius:14px; padding:0; overflow:hidden;
+  }
+  .flow-toolbar {
+    display:flex; gap:8px; padding:16px 20px;
+    border-bottom:1px solid var(--border);
+    align-items:center; flex-wrap:wrap;
+  }
+  .flow-toolbar button {
+    background: var(--surface); border:1px solid var(--border);
+    color: var(--text); padding:6px 14px; border-radius:6px;
+    cursor:pointer; font-size:0.85em; font-family:inherit;
+    transition: all 0.2s;
+  }
+  .flow-toolbar button:hover { border-color: var(--accent); }
+  .flow-toolbar button.running { background: var(--accent); color:#fff; border-color:var(--accent); }
+  .flow-toolbar .step-info { margin-left:auto; color: var(--dim); font-size:0.85em; }
+  .flow-canvas {
+    position:relative; min-height: 900px;
+    background: radial-gradient(circle, rgba(255,255,255,0.01) 1px, transparent 1px);
+    background-size: 24px 24px;
+    overflow: auto;
+  }
+  .flow-canvas svg { width:100%; height:auto; display:block; }
+
+  /* step highlight animation */
+  @keyframes pulse-node {
+    0%,100% { filter: brightness(1); }
+    50% { filter: brightness(1.4) drop-shadow(0 0 8px var(--accent)); }
+  }
+  @keyframes trace-edge {
+    from { stroke-dashoffset: 24; }
+    to   { stroke-dashoffset: 0; }
+  }
+  .node-highlight { animation: pulse-node 0.8s ease-in-out 2; }
+  .edge-animate {
+    stroke-dasharray: 8 4;
+    animation: trace-edge 0.6s linear infinite;
+  }
+
+  /* LBA diagram animations */
+  @keyframes lba-reveal {
+    from { opacity:0; transform: translateY(12px); }
+    to   { opacity:1; transform: translateY(0); }
+  }
+  @keyframes lba-bar-grow {
+    from { transform: scaleX(0); }
+    to   { transform: scaleX(1); }
+  }
+  @keyframes lba-connector-draw {
+    from { stroke-dashoffset: 300; }
+    to   { stroke-dashoffset: 0; }
+  }
+  .lba-anim { animation: lba-reveal 0.45s ease-out both; }
+  .lba-connector { stroke-dasharray: 300; animation: lba-connector-draw 0.8s ease-out forwards; }
+
+  /* light-theme disk canvas override */
+  .flow-canvas.light-bg { background: #fafbfc; }
+  #diTooltip b { color: #1f2328; }
+
+  /* timeline */
+  .timeline { position:relative; padding-left:32px; }
+  .timeline::before {
+    content:''; position:absolute; left:11px; top:8px; bottom:8px;
+    width:2px; background: var(--border);
+  }
+  .tl-step {
+    position:relative; padding:12px 0 12px 28px;
+    border-left: 2px solid transparent;
+    transition: all 0.4s;
+  }
+  .tl-step.active {
+    border-left-color: var(--accent);
+    background: linear-gradient(90deg, rgba(88,166,255,0.06) 0%, transparent 100%);
+  }
+  .tl-step .dot {
+    position:absolute; left:-10px; top:18px;
+    width:18px; height:18px; border-radius:50%;
+    background: var(--surface); border:2px solid var(--border);
+    transition: all 0.3s;
+  }
+  .tl-step.active .dot {
+    background: var(--accent); border-color: var(--accent);
+    box-shadow: 0 0 12px rgba(88,166,255,0.4);
+  }
+  .tl-step h3 { font-size:1em; margin:0; }
+  .tl-step p { color:var(--dim); font-size:0.85em; margin:4px 0 0; }
+  .tl-step .detail { display:none; margin-top:12px; padding:12px;
+    background:rgba(255,255,255,0.02); border-radius:8px;
+    font-size:0.85em; border:1px solid var(--border);
+  }
+  .tl-step.active .detail { display:block; }
+
+  /* comparison table */
+  .cmp-table { width:100%; border-collapse:collapse; }
+  .cmp-table th, .cmp-table td {
+    padding: 12px 16px; text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .cmp-table th { color: var(--dim); font-weight:600; font-size:0.82em; text-transform:uppercase; }
+  .cmp-table td { font-size:0.92em; }
+  .cmp-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+  /* responsive */
+  @media (max-width: 768px) {
+    .hero h1 { font-size:1.6em; }
+    .nav-bar { gap:2px; padding:10px; }
+    .nav-bar button { padding:6px 10px; font-size:0.78em; }
+    .glossary-grid { grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>Windows <span>IO 原理</span> 全景解析</h1>
+  <p>从用户态 write() 到磁盘物理扇区 —— 完整数据路径与关键数据结构</p>
+</div>
+
+<nav class="nav-bar">
+  <button class="active" data-tab="overview">全景概览</button>
+  <button data-tab="flow">分步动画</button>
+  <button data-tab="terms">术语词典</button>
+  <button data-tab="timeline">时序流程</button>
+  <button data-tab="compare">对比分析</button>
+	  <button data-tab="rwflow">读写流程</button>
+	  <button data-tab="ntfs">NTFS 详解</button>
+	  <button data-tab="diskinit">磁盘初始化</button>
+</nav>
+
+<!-- ════════════════ 全景概览 ════════════════ -->
+<section class="section active" id="tab-overview">
+<div class="flow-wrapper">
+  <div class="flow-toolbar">
+    <span style="font-weight:600;">Windows IO 栈分层架构</span>
+    <span style="color:var(--dim);font-size:0.82em;margin-left:12px;">— 悬停查看详情，点击高亮路径</span>
+  </div>
+  <div class="flow-canvas" id="overviewCanvas"></div>
+</div>
+</section>
+
+<!-- ════════════════ 分步动画 ════════════════ -->
+<section class="section" id="tab-flow">
+<div class="flow-wrapper">
+  <div class="flow-toolbar">
+    <button id="btnPlay" onclick="togglePlay()">▶ 自动播放</button>
+    <button id="btnPrev" onclick="prevStep()">◀ 上一步</button>
+    <button id="btnNext" onclick="nextStep()">下一步 ▶</button>
+    <button id="btnReset" onclick="resetSteps()">↺ 重置</button>
+    <span class="step-info" id="stepInfo">步骤 0 / 12</span>
+  </div>
+  <div class="flow-canvas" id="stepCanvas"></div>
+</div>
+</section>
+
+<!-- ════════════════ 术语词典 ════════════════ -->
+<section class="section" id="tab-terms">
+<h2 style="margin-bottom:20px;">核心术语词典</h2>
+<div class="glossary-grid" id="glossaryGrid"></div>
+</section>
+
+<!-- ════════════════ 时序流程 ════════════════ -->
+<section class="section" id="tab-timeline">
+<h2 style="margin-bottom:20px;">Write 请求完整时序</h2>
+<div class="timeline" id="timelineContainer"></div>
+</section>
+
+<!-- ════════════════ 对比分析 ════════════════ -->
+<section class="section" id="tab-compare">
+<h2 style="margin-bottom:20px;">关键路径对比</h2>
+<table class="cmp-table">
+  <thead>
+    <tr><th>维度</th><th>缓存 IO (Buffered)</th><th>直接 IO (Direct)</th><th>异步 IO (Overlapped)</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>数据路径</strong></td>
+      <td>用户缓冲 → 系统缓存 → 磁盘</td>
+      <td>用户缓冲 → 磁盘（绕过缓存）</td>
+      <td>用户缓冲 → 内核队列 → 磁盘</td>
+    </tr>
+    <tr><td><strong>缓存参与</strong></td><td>是（系统缓存 / VACB / BCB）</td><td>否（FILE_FLAG_NO_BUFFERING）</td><td>取决于是否设置 NO_BUFFERING</td></tr>
+    <tr><td><strong>MDL 创建</strong></td><td>缓存管理器创建 MDL 锁定页面</td><td>IO 管理器直接创建 MDL</td><td>IO 管理器创建 MDL</td></tr>
+    <tr><td><strong>写返回时机</strong></td><td>复制到缓存即返回（延迟写）</td><td>磁盘写入完成才返回</td><td>立即返回，完成时回调</td></tr>
+    <tr><td><strong>适用场景</strong></td><td>通用文件读写</td><td>数据库、日志（自带缓存的应用）</td><td>高性能服务器</td></tr>
+    <tr><td><strong>IRP 类型</strong></td><td>IRP_MJ_WRITE (cached)</td><td>IRP_MJ_WRITE (non-cached)</td><td>IRP_MJ_WRITE (async)</td></tr>
+    <tr><td><strong>对齐要求</strong></td><td>无特殊要求</td><td>扇区大小对齐（通常 512B）</td><td>取决于 FILE_FLAG 设置</td></tr>
+  </tbody>
+</table>
+
+<h2 style="margin:32px 0 16px;">文件系统对比</h2>
+<table class="cmp-table">
+  <thead>
+    <tr><th>特性</th><th>NTFS</th><th>FAT32 / exFAT</th><th>ReFS</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>元数据结构</strong></td><td>MFT（主文件表）</td><td>FAT 链 + 目录项</td><td>B+ 树目录</td></tr>
+    <tr><td><strong>位图</strong></td><td>$Bitmap 文件</td><td>FAT 表本身即分配图</td><td>分配位图</td></tr>
+    <tr><td><strong>文件记录</strong></td><td>MFT 记录（1KB/条），包括常驻/非常驻属性</td><td>目录项（8.3 / LFN）</td><td>B+ 树节点</td></tr>
+    <tr><td><strong>空闲空间管理</strong></td><td>$Bitmap + 卷位图缓存</td><td>FAT 遍历</td><td>分配位图</td></tr>
+    <tr><td><strong>最大卷</strong></td><td>8PB (Win10+)</td><td>2TB (FAT32) / 128PB (exFAT)</td><td>35PB (理论更大)</td></tr>
+    <tr><td><strong>数据完整性</strong></td><td>日志 ($LogFile)</td><td>无（FAT32）；TFAT（exFAT 可选）</td><td>校验和 + Copy-on-Write</td></tr>
+  </tbody>
+</table>
+
+<h2 style="margin:32px 0 16px;">卷管理器类型</h2>
+<table class="cmp-table">
+  <thead>
+    <tr><th>类型</th><th>驱动</th><th>功能</th><th>映射粒度</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>基本磁盘</strong></td><td>Partition Manager (partmgr.sys)</td><td>MBR / GPT 分区映射</td><td>分区级</td></tr>
+    <tr><td><strong>动态磁盘</strong></td><td>Logical Disk Manager (dmio.sys)</td><td>跨区卷、带区卷、镜像卷、RAID-5</td><td>LDM 数据库记录</td></tr>
+    <tr><td><strong>存储空间</strong></td><td>Storage Spaces (spaceport.sys)</td><td>存储池、弹性、分层</td><td>slab (256MB)</td></tr>
+  </tbody>
+</table>
+</section>
+
+<!-- ════════════════ 读写流程 ════════════════ -->
+<section class="section" id="tab-rwflow">
+<div class="flow-wrapper">
+  <div class="flow-toolbar">
+    <span style="font-weight:600;">NTFS 读写流程详解</span>
+    <button id="btnWriteFlow" class="rw-sub active" onclick="showRWFlow('write')" style="margin-left:16px;">写入流程</button>
+    <button id="btnReadFlow" class="rw-sub" onclick="showRWFlow('read')">读取流程</button>
+    <span style="color:var(--dim);font-size:0.82em;margin-left:12px;">— 区分缓存 IO · 直接 IO · 异步 IO 三条路径</span>
+  </div>
+  <div class="flow-canvas" id="rwCanvas"></div>
+</div>
+</section>
+
+<!-- ════════════════ NTFS 详解 ════════════════ -->
+<section class="section" id="tab-ntfs">
+<div class="flow-wrapper">
+  <div class="flow-toolbar">
+    <span style="font-weight:600;">NTFS 文件系统深度解析</span>
+    <button id="btnNTFSArch" class="ntfs-sub active" onclick="showNTFS('arch')" style="margin-left:16px;">框架结构</button>
+    <button id="btnNTFSWrite" class="ntfs-sub" onclick="showNTFS('write')">写入过程</button>
+    <button id="btnNTFSRead" class="ntfs-sub" onclick="showNTFS('read')">读取过程</button>
+    <span style="color:var(--dim);font-size:0.82em;margin-left:12px;">— 从数据结构到处理流程</span>
+  </div>
+  <div class="flow-canvas" id="ntfsCanvas"></div>
+</div>
+</section>
+
+<!-- ════════════════ 磁盘初始化 ════════════════ -->
+<section class="section" id="tab-diskinit">
+<div class="flow-wrapper">
+  <div class="flow-toolbar">
+    <span style="font-weight:600;">磁盘初始化</span>
+    <button id="btnDIMBR" class="di-sub active" onclick="showDiskInit('mbr')" style="margin-left:16px;">MBR 布局</button>
+    <button id="btnDIGPT" class="di-sub" onclick="showDiskInit('gpt')">GPT 布局</button>
+    <button id="btnDIAll" class="di-sub" onclick="showDiskInit('all')">完整流程</button>
+    <button id="btnDIPart" class="di-sub" onclick="showDiskInit('part')">分区对比</button>
+    <button id="btnDIFormat" class="di-sub" onclick="showDiskInit('format')">格式化详解</button>
+    <span style="color:var(--dim);font-size:0.82em;margin-left:12px;">— 从磁盘插入到卷就绪</span>
+  </div>
+  <div class="flow-canvas" id="diCanvas" style="position:relative;"></div>
+  <div id="diTooltip" style="display:none;position:fixed;background:#fff;border:1px solid #d0d7de;border-radius:8px;padding:12px 16px;font-size:0.84em;line-height:1.65;box-shadow:0 8px 28px rgba(0,0,0,0.15);z-index:9999;max-width:400px;pointer-events:none;color:#1f2328;"></div>
+</div>
+</section>
+
+<script>
+// ═══════════════════════════════════════════
+//  DATA
+// ═══════════════════════════════════════════
+const glossary = [
+  { icon:"📦", en:"File Handle", zh:"文件句柄", desc:"用户态通过 CreateFile 获得的文件引用标识，内核中对应 FILE_OBJECT 指针。用户态所有 IO 操作的入口凭证。" },
+  { icon:"🧠", en:"FCB — File Control Block", zh:"FCB 文件控制块", desc:"文件系统为每个打开的文件维护的内核数据结构，包含文件属性、大小、MFT 引用、文件锁等。通过句柄 → FILE_OBJECT → FCB 关联。" },
+  { icon:"📋", en:"MFT — Master File Table", zh:"MFT 主文件表（即文件记录表）", desc:"NTFS 的核心元数据。MFT 本身就是文件记录表——每个文件/目录对应一条 1KB 的 MFT 记录。文件的所有属性（文件名、时间戳、数据簇流 Run List 等）均存储于此。小文件数据可嵌入记录内（常驻属性），大文件则通过 Run List 索引数据簇（非常驻属性）。" },
+  { icon:"🗺️", en:"$Bitmap / Free Cluster Bitmap", zh:"$Bitmap（簇分配位图）", desc:"NTFS 核心元数据文件，每 bit 代表一个簇的分配状态（1=已分配，0=空闲）。NTFS 中不存在独立的「空闲簇表」，$Bitmap 即是唯一的空闲空间追踪结构。写入新数据时据此查找空闲簇。" },
+  { icon:"📄", en:"Run List / Data Runs", zh:"Run List（簇流列表）", desc:"MFT 记录中非常驻属性 $DATA 的组成部分。以 VCN→LCN 映射对的形式描述文件数据所在的磁盘簇范围。每个 run 记录起始 LCN 和簇数，多个 run 形成文件的非连续（碎片化）存储布局。并非独立结构，而是 MFT 记录内的属性数据。" },
+  { icon:"📡", en:"IRP — I/O Request Packet", zh:"IRP IO 请求包", desc:"Windows IO 管理器的核心数据结构。封装了 IO 操作的类型（MJ_WRITE/MJ_READ 等）、目标设备、缓冲区 MDL、状态等。沿驱动栈向下传递。" },
+  { icon:"🧵", en:"IO Manager", zh:"IO 管理器", desc:"内核模块 iomgr。将 IO 请求转换为 IRP 结构，并沿设备栈逐层下发。支持同步/异步、缓存/非缓存路径。" },
+  { icon:"💾", en:"Page Cache / Cache Manager", zh:"缓存管理器 / 系统缓存", desc:"内核模块 cc（CcInitializeCacheMap）。以 VACB (Virtual Address Control Block) 索引缓存视图，BCB (Buffer Control Block) 跟踪缓存缓冲。实现按需读入和延迟写入。" },
+  { icon:"🔒", en:"MDL — Memory Descriptor List", zh:"MDL 内存描述符列表", desc:"描述一组物理页面的内核结构。用于锁定用户缓冲区、DMA 传输、缓存映射等，确保 IO 期间页面不被换出。" },
+  { icon:"📊", en:"VACB — Virtual Address Control Block", zh:"VACB 虚拟地址控制块", desc:"缓存管理器的核心索引结构。每个 VACB 对应文件的一个 256KB 缓存视图段，描述该段在系统缓存虚拟地址空间的映射位置。" },
+  { icon:"📝", en:"BCB — Buffer Control Block", zh:"BCB 缓冲控制块", desc:"缓存管理器中跟踪单个缓存页（通常 4KB）的状态结构，包含脏标记、锁状态、LRU 列表指针等。" },
+  { icon:"🔄", en:"Lazy Writer", zh:"延迟写入机制", desc:"由缓存管理器的系统线程（CcLazyWriter）定期将脏页刷写到磁盘。以工作项排队，考虑系统负载、LRU 顺序、脏页比例等因素。" },
+  { icon:"🔍", en:"Filter Driver", zh:"过滤驱动", desc:"附加在文件系统或磁盘驱动栈上的中间驱动。防病毒软件（扫描 IO）、加密软件（BitLocker/第三方）、压缩驱动均通过此机制实现透明拦截。" },
+  { icon:"🗂️", en:"Volume Manager", zh:"卷管理器", desc:"负责将文件系统的 LCN 转换为磁盘 LBA。映射关系在内存中实时计算，而非存储在「映射表文件」中。卷布局元数据（分区表/GPT、VBR）存储在磁盘固定扇区。处理分区偏移、跨区卷、带区卷、镜像卷等布局变换。" },
+  { icon:"📐", en:"LBA — Logical Block Address", zh:"LBA 逻辑块地址", desc:"磁盘物理寻址单位，通常一个扇区 = 512B 或 4KB（4Kn）。卷管理器的映射表将 LCN 转换为 LBA。" },
+  { icon:"⚙️", en:"Disk Driver / Miniport", zh:"磁盘驱动 / 小端口驱动", desc:"分为 class driver (disk.sys) 和 miniport (厂商提供)。class driver 处理通用逻辑（分区、IO 队列），miniport 操作具体硬件寄存器。" },
+  { icon:"⏱️", en:"PFN — Page Frame Number", zh:"PFN 页框号", desc:"物理页号。内存管理器通过 PFN 数据库跟踪每个物理页面的状态（活跃、脏、空闲、备用等）。缓存 flush 时更新对应 PFN 状态。" },
+  { icon:"📑", en:"LRU List", zh:"LRU 列表（最近最少使用）", desc:"缓存管理器维护的淘汰链表。当内存紧张时从 LRU 尾部回收干净页，脏页则先刷写后回收。" },
+];
+
+const timelineSteps = [
+  { title:"1. 用户态 write() / WriteFile()", detail:"应用程序调用 WriteFile(hFile, buf, len, ...)。参数：文件句柄、用户缓冲区首地址、写入长度。CPU 处于 Ring 3（用户态）。", zone:"user" },
+  { title:"2. 系统调用 → 内核态切换", detail:"ntdll.dll 中的 NtWriteFile stub 执行 syscall/sysenter 指令。CPU 切换到 Ring 0。内核从线程的 ETHREAD 恢复内核栈和处理器控制区(KPCR)。参数复制到内核栈。", zone:"kernel" },
+  { title:"3. 句柄解析 → 文件对象", detail:"IO 管理器调用 ObReferenceObjectByHandle() 将句柄值转换为 FILE_OBJECT 指针。句柄表位于进程 EPROCESS → ObjectTable。同时检查访问权限(ACCESS_MASK)。", zone:"kernel" },
+  { title:"4. 内存管理 & 缓存操作", detail:"① 创建 MDL 锁定用户缓冲区页面（MmProbeAndLockPages）；② 缓存管理器检查请求范围是否在 VACB 映射中；③ 命中：直接操作 BCB 缓存页；④ 不命中：分配新 VACB/BCB，发起预读（可能触发分页 IO）。", zone:"kernel" },
+  { title:"5. 缓存元数据更新", detail:"将缓存页标记为脏（BCB 中置 Modified bit）；更新 VACB 引用；调整 BCB 在 LRU 列表的位置（移至热端）；更新文件大小（如追加写）。脏页比例超过阈值时唤醒 Lazy Writer。", zone:"kernel" },
+  { title:"6. 延迟写入返回", detail:"对缓存 IO（默认模式），数据复制到系统缓存后 WriteFile 即返回成功。实际磁盘写入由延迟写入机制异步完成。应用可通过 FlushFileBuffers() 强制刷写。", zone:"kernel" },
+  { title:"7. 文件系统处理", detail:"IO 管理器构造 IRP (IRP_MJ_WRITE) 发送给文件系统驱动(NTFS.sys)。NTFS 执行：① 通过 FCB 定位文件 MFT 记录；② 通过 Bitmap 分配新簇；③ 更新 run list；④ $LogFile 写日志记录(redo/undo)；⑤ MFT 记录更新；⑥ 输出新的 IRP（已被转换为连续簇的磁盘扇区范围）。", zone:"fs" },
+  { title:"8. 过滤器驱动拦截", detail:"IRP 沿设备栈经过附加的过滤驱动。例如：防病毒驱动扫描写入内容；BitLocker 加密驱动(Fvevol.sys) 加密数据；dedup 驱动去重。每个过滤驱动可修改、替换、或完成 IRP。", zone:"filter" },
+  { title:"9. 卷管理器映射", detail:"卷管理器(FtDisk/DmIo/PartMgr) 将文件系统的逻辑簇号(LCN)转换为物理 LBA：LBA = LCN × SectorsPerCluster + PartitionStartOffset。对于动态卷，通过 LDM 数据库查找实际磁盘布局。", zone:"vol" },
+  { title:"10. 磁盘类驱动", detail:"disk.sys 接收 IRP，将其插入 IO 队列，进行调度（电梯算法、NCQ）。计算最终 LBA 后构造 SCSI Request Block (SRB) 或 ATA CDB。", zone:"hw" },
+  { title:"11. 小端口驱动 & 硬件", detail:"厂商 miniport 驱动(如 storport.sys + 厂商 miniport)将 SRB 写入 HBA 寄存器。HBA 通过 SATA/SAS/NVMe 协议将数据写入磁盘盘片或 NAND。DMA 控制器接管数据传输。", zone:"hw" },
+  { title:"12. 完成 & 回调", detail:"硬件完成后触发中断 → ISR → DPC。miniport 设置 IRP 完成状态。IRP 沿设备栈逆序「回卷」：每个驱动层执行 CompletionRoutine。最终 IO 管理器通知等待者（同步 IO）或设置事件/排队 APC（异步 IO）。", zone:"kernel" },
+];
+
+// ─── SVG Drawing ───
+const NS = "http://www.w3.org/2000/svg";
+
+function makeSvg(w,h) {
+  const svg = document.createElementNS(NS,"svg");
+  svg.setAttribute("viewBox",`0 0 ${w} ${h}`);
+  svg.setAttribute("width","100%"); svg.setAttribute("height","auto");
+  svg.style.display="block";
+  return svg;
+}
+function el(tag,attrs={}) {
+  const e = document.createElementNS(NS,tag);
+  for (const [k,v] of Object.entries(attrs)) e.setAttribute(k,v);
+  return e;
+}
+
+// colors
+const C = {
+  user: '#58a6ff', kernel:'#a371f7', fs:'#3fb950', vol:'#d2991d',
+  hw:'#f85149', cache:'#39c5cf', cyan:'#39c5cf', filter:'#f0883e',
+  edge:'#484f58', text:'#c9d1d9', dim:'#8b949e',
+  surface:'#161b22', bg:'#0d1117',
+  accent: '#58a6ff', green:'#3fb950',
+};
+
+  // ─── Shared SVG Helpers ───
+  function svgRect(x,y,w,h,rx=8,fill=C.surface,stroke=C.edge) {
+    const r = el('rect',{x,y,width:w,height:h,rx,fill,stroke,'stroke-width':1.5});
+    r.style.transition='all 0.3s'; r.style.cursor='pointer'; return r;
+  }
+  function svgTxt(x,y,text,size=14,fill=C.text,anchor='middle',bold=false) {
+    const t = el('text',{x,y,fill,'font-size':size,'text-anchor':anchor});
+    if(bold) t.setAttribute('font-weight','600');
+    t.textContent = text; return t;
+  }
+  function svgArrow(x1,y1,x2,y2,color=C.edge) {
+    return el('line',{x1,y1,x2,y2,stroke:color,'stroke-width':2,markerEnd:'url(#arrowhead)'});
+  }
+  function svgDashedArrow(x1,y1,x2,y2,color=C.edge) {
+    return el('line',{x1,y1,x2,y2,stroke:color,'stroke-width':1.5,'stroke-dasharray':'6 4',markerEnd:'url(#arrowhead)'});
+  }
+  function svgLabel(x,y,text,size=12,fill=C.dim) {
+    const t = el('text',{x,y,fill,'font-size':size,'text-anchor':'middle'});
+    t.textContent=text; return t;
+  }
+
+// ─── OVERVIEW SVG ───
+function drawOverview() {
+  const W=1100, H=950;
+  const svg = makeSvg(W,H);
+  const g = el('g',{fontFamily:'"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif'});
+
+  // aliases for cleaner code within this function
+  const rect=svgRect, txt=svgTxt, arrow=svgArrow, dashedArrow=svgDashedArrow, label=svgLabel;
+
+  // defs
+  const defs = el('defs');
+  defs.innerHTML=`<marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="${C.edge}"/></marker>`;
+  g.append(defs);
+
+  // ── User Space ──
+  g.append(rect(340,10,420,64,10,C.surface, C.user));
+  g.append(txt(550,38,'应用程序 (User Space / Ring 3)',14,C.user,'middle',true));
+  // App box
+  const appBox = rect(430,90,240,56,8,'rgba(88,166,255,0.08)',C.user);
+  appBox.setAttribute('data-tip','应用调用 WriteFile(hFile,buf,len,NULL)');
+  g.append(appBox);
+  g.append(txt(550,110,'WriteFile(hFile, buf, len, ...)',13,C.text));
+  g.append(txt(550,132,'参数: 文件句柄(HANDLE) · 缓冲区地址 · 长度',11,C.dim));
+
+  // Syscall
+  g.append(arrow(550,146,550,180, C.user));
+  g.append(label(600,165,'syscall / sysenter',10,C.dim));
+
+  // Kernel boundary
+  const kBox = rect(250,190,600,240,12,'rgba(163,113,247,0.04)',C.kernel);
+  kBox.setAttribute('stroke-dasharray','4 3');
+  g.append(kBox);
+  g.append(txt(300,212,'内核空间 (Ring 0)',12,C.kernel,'start',true));
+
+  // Inside Kernel
+  // Step1: handle→fileobj
+  g.append(rect(290,230,260,42,6,'rgba(163,113,247,0.08)',C.kernel));
+  g.append(txt(420,244,'句柄解析: Handle → FILE_OBJECT',12,C.text));
+  g.append(txt(420,260,'ObReferenceObjectByHandle()',10,C.dim));
+
+  // Step2: Cache & Memory
+  g.append(rect(290,285,260,42,6,'rgba(57,197,207,0.1)',C.cache));
+  g.append(txt(420,299,'缓存命中检查 / MDL 创建',12,C.text));
+  g.append(txt(420,315,'VACB · BCB · MmProbeAndLockPages',10,C.dim));
+
+  // Arrow within kernel
+  g.append(arrow(420,272,420,285,C.cache));
+  g.append(arrow(420,327,420,340,C.cache));
+
+  // Step3: Cache metadata
+  g.append(rect(290,340,260,42,6,'rgba(57,197,207,0.1)',C.cache));
+  g.append(txt(420,354,'元数据更新: 脏页标记 · LRU 调整',12,C.text));
+  g.append(txt(420,370,'BCB dirty bit · VACB ref · LRU hot',10,C.dim));
+
+  // Arrow to IO Mgr
+  g.append(arrow(420,382,420,400,C.cache));
+
+  // IO Manager
+  g.append(rect(590,285,230,50,8,'rgba(163,113,247,0.1)',C.kernel));
+  g.append(txt(705,304,'IO 管理器 (IRP 构造)',12,C.text,'middle',true));
+  g.append(txt(705,324,'构造 IRP_MJ_WRITE 请求包',10,C.dim));
+
+  // Cache Manager sub-box
+  g.append(rect(290,395,260,30,6,'rgba(57,197,207,0.06)',C.cache));
+  g.append(txt(420,413,'缓存管理器 · 延迟写入 (Lazy Writer)',11,C.cache));
+
+  // Arrow kernel→FS
+  g.append(arrow(550,430,550,470,C.kernel));
+  g.append(label(600,452,'IO 栈下发 IRP',10,C.dim));
+
+  // Direct IO arrow
+  const dIoArrow = dashedArrow(590,310,550,470,C.cache);
+  g.append(dIoArrow);
+  g.append(label(650,390,'直接IO: FILE_FLAG_NO_BUFFERING (需扇区对齐)',10,C.cyan));
+
+  // ── File System Layer ──
+  const fsBg = rect(230,470,640,130,10,'rgba(63,185,80,0.04)',C.fs);
+  fsBg.setAttribute('stroke-dasharray','4 3');
+  g.append(fsBg);
+  g.append(txt(550,490,'文件系统层 (NTFS / FAT / ReFS)',13,C.fs,'middle',true));
+  // FS calls Cache Manager for buffered IO
+  g.append(svgTxt(800,505,'↖ FS 调用 CcCopyWrite()',9,C.cache,'start'));
+
+  // FS sub-boxes
+  const fsItems=[
+    {x:248,y:505,w:100,h:40,label:'FCB',sub:'文件控制块'},
+    {x:358,y:505,w:120,h:40,label:'MFT',sub:'主文件表/文件记录'},
+    {x:488,y:505,w:130,h:40,label:'$Bitmap',sub:'簇分配位图/空闲'},
+    {x:628,y:505,w:100,h:40,label:'Run List',sub:'簇流/Extent'},
+    {x:738,y:505,w:100,h:40,label:'$LogFile',sub:'事务日志'},
+  ];
+  fsItems.forEach(fi=>{
+    g.append(rect(fi.x,fi.y,fi.w,fi.h,6,'rgba(63,185,80,0.08)',C.fs));
+    g.append(txt(fi.x+fi.w/2,fi.y+17,fi.label,12,C.fs,'middle',true));
+    g.append(txt(fi.x+fi.w/2,fi.y+33,fi.sub,9,C.dim));
+  });
+
+  g.append(txt(550,570,'下发: IRP（连续 LCN 映射完成 → 存储栈）',11,C.text));
+
+  // Arrow FS→Filter
+  g.append(arrow(550,600,550,625,C.fs));
+
+  // ── Filter Driver ──
+  g.append(rect(330,625,440,38,8,'rgba(240,136,62,0.08)',C.filter));
+  g.append(txt(550,639,'过滤器驱动 (防病毒 · 加密 · 去重 · 压缩)',13,C.filter,'middle',true));
+  g.append(txt(550,654,'FltMgr.sys — 每个迷你过滤驱动可拦截/修改/完成 IRP',10,C.dim));
+
+  g.append(arrow(550,663,550,690,C.filter));
+
+  // ── Volume Manager ──
+  const volBg = rect(230,690,640,75,10,'rgba(210,153,29,0.04)',C.vol);
+  g.append(volBg);
+  g.append(txt(550,708,'卷管理器 (Volume Manager)',13,C.vol,'middle',true));
+  g.append(rect(290,716,120,36,6,'rgba(210,153,29,0.1)',C.vol));
+  g.append(txt(350,732,'映射表',12,C.vol));
+  g.append(txt(350,747,'内存计算: LCN → LBA',9,C.dim));
+  g.append(rect(430,716,180,36,6,'rgba(210,153,29,0.08)',C.vol));
+  g.append(txt(520,732,'PartMgr / DmIo / FtDisk',12,C.text));
+  g.append(txt(520,747,'分区偏移(GPT/MBR) · 跨区/带区/镜像',9,C.dim));
+  g.append(rect(630,716,150,36,6,'rgba(210,153,29,0.08)',C.vol));
+  g.append(txt(705,732,'LBA 输出',12,C.text));
+  g.append(txt(705,747,'物理扇区地址序列',9,C.dim));
+
+  g.append(arrow(550,765,550,790,C.vol));
+
+  // ── Driver ──
+  g.append(rect(380,790,340,38,8,'rgba(248,81,73,0.08)',C.hw));
+  g.append(txt(550,804,'磁盘类驱动 (disk.sys) → 小端口驱动 (storport.sys)',13,C.hw,'middle',true));
+  g.append(txt(550,820,'SRB · 电梯调度 · NCQ · DMA 设置',10,C.dim));
+
+  g.append(arrow(550,828,550,855,C.hw));
+
+  // ── Disk ──
+  g.append(rect(400,855,300,50,10,'rgba(248,81,73,0.12)',C.hw));
+  g.append(txt(550,875,'💿 物理磁盘 (HDD / SSD / NVMe)',14,C.hw,'middle',true));
+  g.append(txt(550,895,'扇区寻址 · 写入盘片或 NAND 页',10,C.dim));
+
+  // ── Completion path (right side) ──
+  g.append(dashedArrow(780,875,880,875,C.hw));
+  g.append(txt(880,865,'中断 → ISR → DPC',10,C.dim));
+  g.append(dashedArrow(880,875,880,700,C.hw));
+  g.append(dashedArrow(880,700,880,470,C.hw));
+  g.append(txt(930,590,'IRP 完成\n逆序回卷',10,C.dim));
+  g.append(dashedArrow(880,470,880,350,C.hw));
+  g.append(dashedArrow(880,350,880,240,C.hw));
+  g.append(txt(920,280,'IO 完成通知\n同步: 等待线程\n异步: APC / Event',10,C.dim));
+  g.append(dashedArrow(880,240,780,240,C.hw));
+  g.append(dashedArrow(780,240,780,90,C.hw));
+  g.append(arrow(780,90,670,90,C.hw));
+
+  // Legend
+  const legendY=920;
+  const legendItems=[
+    {c:C.user,l:'用户态'},{c:C.kernel,l:'内核'},{c:C.cache,l:'缓存'},
+    {c:C.fs,l:'文件系统'},{c:C.filter,l:'过滤驱动'},{c:C.vol,l:'卷管理'},{c:C.hw,l:'硬件'},
+  ];
+  legendItems.forEach((li,i)=>{
+    const lx=160+i*120;
+    g.append(el('circle',{cx:lx,cy:legendY,r:6,fill:li.c}));
+    g.append(txt(lx+14,legendY+5,li.l,11,C.dim,'start'));
+  });
+
+  svg.append(g);
+  document.getElementById('overviewCanvas').appendChild(svg);
+}
+
+// ─── STEP-BY-STEP SVG ───
+let currentStep = 0;
+const totalSteps = 12;
+
+const stepDescriptions = [
+  '步骤 0: 整体架构概览',
+  '步骤 1: 应用程序调用 WriteFile()',
+  '步骤 2: syscall → 内核态切换',
+  '步骤 3: 句柄解析 → FILE_OBJECT',
+  '步骤 4: 缓存命中检查 & MDL 创建',
+  '步骤 5: 缓存元数据更新 (BCB/VACB/LRU)',
+  '步骤 6: 缓存复制完成 → 返回用户态 / 直接IO路径',
+  '步骤 7: 文件系统处理 (FCB→MFT记录→$Bitmap→RunList→$LogFile)',
+  '步骤 8: 过滤驱动拦截 (AV/加密/去重)',
+  '步骤 9: 卷管理器 LCN→LBA 映射',
+  '步骤 10: 磁盘类驱动 (disk.sys + miniport)',
+  '步骤 11: 物理磁盘写入 & DMA',
+  '步骤 12: IRP 完成回卷 & IO 通知',
+];
+
+function drawStepSVG(step) {
+  const W=1100, H=980;
+  const svg = makeSvg(W,H);
+  const g = el('g',{fontFamily:'"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif'});
+
+  const defs = el('defs');
+  defs.innerHTML=`<marker id="arrowhead2" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#58a6ff"/></marker>
+  <marker id="arrowheadGray" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#484f58"/></marker>
+  <filter id="glow"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`;
+  g.append(defs);
+
+  // helper – scaled down version of the stack
+  const boxes = [
+    { id:'app', x:430,y:20,w:240,h:44, fill:'rgba(88,166,255,0.08)', stroke:C.user, label:'应用程序 WriteFile(hFile, buf, len)', zone:'user', desc:'用户态 Ring 3' },
+    { id:'syscall', x:430,y:74,w:240,h:26, fill:'transparent', stroke:C.user, label:'syscall / sysenter → Ring 0', zone:'user', desc:'模式切换', dashed:true },
+    { id:'handle', x:290,y:115,w:520,h:38, fill:'rgba(163,113,247,0.06)', stroke:C.kernel, label:'句柄解析: Handle → FILE_OBJECT · 权限检查', zone:'kernel', desc:'ObReferenceObjectByHandle()' },
+    { id:'cache1', x:290,y:163,w:520,h:38, fill:'rgba(57,197,207,0.06)', stroke:C.cache, label:'缓存命中检查 & MDL 创建 (MmProbeAndLockPages)', zone:'kernel', desc:'VACB 查找 · BCB 分配 · 分页可能触发' },
+    { id:'cache2', x:290,y:211,w:520,h:38, fill:'rgba(57,197,207,0.06)', stroke:C.cache, label:'缓存元数据更新: 脏页标记 · VACB/BCB · LRU 调整', zone:'kernel', desc:'BCB dirty · VACB ref++ · LRU to hot' },
+    { id:'iomgr', x:590,y:259,w:220,h:60, fill:'rgba(163,113,247,0.06)', stroke:C.kernel, label:'IO 管理器\n构造 IRP_MJ_WRITE', zone:'kernel', desc:'分配 IRP · 设置栈位置' },
+    { id:'lazy', x:290,y:259,w:280,h:60, fill:'rgba(57,197,207,0.06)', stroke:C.cache, label:'缓存管理器\n延迟写入返回 / 直接 IO 分岔', zone:'kernel', desc:'Lazy Writer 工作项排队 · 脏页刷写' },
+    { id:'fs', x:230,y:334,w:640,h:70, fill:'rgba(63,185,80,0.04)', stroke:C.fs, label:'文件系统 (NTFS): FCB → MFT记录 → $Bitmap分配 → RunList更新 → $LogFile日志', zone:'fs', desc:'输出: 连续 LCN 的 IRP' },
+    { id:'filter', x:300,y:416,w:500,h:38, fill:'rgba(240,136,62,0.06)', stroke:C.filter, label:'过滤器驱动: 防病毒扫描 · 加密 · 去重 · 压缩', zone:'filter', desc:'FltMgr.sys 调度迷你过滤驱动' },
+    { id:'vol', x:250,y:466,w:600,h:52, fill:'rgba(210,153,29,0.04)', stroke:C.vol, label:'卷管理器: 映射表 LCN → LBA · 分区偏移 · 动态卷布局', zone:'vol', desc:'PartMgr/DmIo/FtDisk' },
+    { id:'driver', x:330,y:530,w:440,h:38, fill:'rgba(248,81,73,0.06)', stroke:C.hw, label:'磁盘类驱动 (disk.sys) → 小端口驱动 (storport.sys)', zone:'hw', desc:'SRB 构造 · 电梯调度 · NCQ · DMA 设置' },
+    { id:'disk', x:380,y:580,w:340,h:44, fill:'rgba(248,81,73,0.1)', stroke:C.hw, label:'💿 物理磁盘: 扇区写入 · HDD 盘片 / SSD NAND / NVMe', zone:'hw', desc:'LBA → 物理位置' },
+    { id:'complete', x:180,y:650,w:740,h:60, fill:'rgba(163,113,247,0.04)', stroke:C.kernel, label:'IRP 完成回卷: 中断 → ISR → DPC → CompletionRoutine 链', zone:'kernel', desc:'逆序遍历设备栈 · 事件/APC 通知 · 同步 IO 线程唤醒', dashed:true },
+  ];
+
+  const arrows = [
+    {from:'app',to:'syscall'},
+    {from:'syscall',to:'handle'},
+    {from:'handle',to:'cache1'},
+    {from:'cache1',to:'cache2'},
+    {from:'cache2',to:'iomgr'},{from:'cache2',to:'lazy'},
+    {from:'lazy',to:'fs'},{from:'iomgr',to:'fs'},
+    {from:'fs',to:'filter'},
+    {from:'filter',to:'vol'},
+    {from:'vol',to:'driver'},
+    {from:'driver',to:'disk'},
+    {from:'disk',to:'complete'},
+  ];
+
+  // Calculate box centers
+  const bc = {};
+  boxes.forEach(b=>{
+    bc[b.id] = {x:b.x+b.w/2, y:b.y+b.h/2, top:b.y, bot:b.y+b.h, left:b.x, right:b.x+b.w};
+  });
+
+  // Draw arrows
+  arrows.forEach(a=>{
+    const f=bc[a.from], t=bc[a.to];
+    let y1=f.bot, y2=t.top;
+    let x1=f.x, x2=t.x;
+    let color=C.edge, width=1.5, dash=null;
+    // Highlight active path
+    if (step>0) {
+      const activeIds = getActiveIds(step);
+      const ai=activeIds.indexOf(a.to);
+      if (ai>=0 && activeIds.indexOf(a.from)>=0) {
+        color='#58a6ff'; width=2.5;
+        dash='8 4';
+      }
+    }
+    const line = el('line',{x1,y1,x2,y2,stroke:color,'stroke-width':width});
+    if(dash) line.setAttribute('stroke-dasharray',dash);
+    line.setAttribute('marker-end','url(#arrowheadGray)');
+    g.append(line);
+  });
+
+  // Draw boxes
+  boxes.forEach(b=>{
+    const r = el('rect',{x:b.x,y:b.y,width:b.w,height:b.h,rx:8,fill:b.fill,stroke:b.stroke,'stroke-width':b.dashed?1.5:2});
+    if(b.dashed) r.setAttribute('stroke-dasharray','5 4');
+
+    // Highlight active
+    if (step>0) {
+      const activeIds = getActiveIds(step);
+      if (activeIds.includes(b.id)) {
+        r.setAttribute('stroke','#58a6ff');
+        r.setAttribute('stroke-width','3');
+        r.setAttribute('filter','url(#glow)');
+      }
+    }
+
+    g.append(r);
+
+    // label
+    const lines = b.label.split('\n');
+    lines.forEach((ln,i)=>{
+      const t = el('text',{x:b.x+b.w/2, y:b.y+b.h/2 + (lines.length===1?5:0) + (i-(lines.length-1)/2)*16, fill:C.text, 'font-size':12, 'text-anchor':'middle'});
+      if (i===0 && step>0 && getActiveIds(step).includes(b.id)) t.setAttribute('font-weight','600');
+      t.textContent=ln; g.append(t);
+    });
+    // zone indicator
+    const zd = el('circle',{cx:b.x+14,cy:b.y+14,r:5,fill:b.stroke});
+    g.append(zd);
+  });
+
+  // Right side info panel
+  if (step>0 && step<=totalSteps) {
+    const infoBg = el('rect',{x:800,y:658,width:285,height:110,rx:10,fill:C.surface,stroke:C.edge,'stroke-width':1});
+    g.append(infoBg);
+    const infoTitle = el('text',{x:815,y:680,fill:C.accent,'font-size':13,'font-weight':'600','text-anchor':'start'});
+    infoTitle.textContent = stepDescriptions[step]; g.append(infoTitle);
+    const infoDesc = el('text',{x:815,y:700,fill:C.dim,'font-size':11,'text-anchor':'start'});
+    infoDesc.innerHTML = timelineSteps[step-1]?.detail?.replace(/\n/g,'<tspan x="815" dy="16">') || '';
+    g.append(infoDesc);
+  }
+
+  // Legend
+  g.append(svgTxt(550,940,stepDescriptions[step],14,C.accent,'middle',true));
+  g.append(svgTxt(550,958,'点击 上一步/下一步 或使用键盘 ← → 导航',11,C.dim));
+
+  svg.append(g);
+  return svg;
+}
+
+function getActiveIds(step) {
+  const map = {
+    1:['app','syscall'], 2:['syscall','handle'], 3:['handle','cache1'],
+    4:['cache1','cache2'], 5:['cache2','lazy','iomgr'],
+    6:['lazy','iomgr'], 7:['lazy','iomgr','fs'],
+    8:['fs','filter'], 9:['filter','vol'], 10:['vol','driver'],
+    11:['driver','disk'], 12:['disk','complete'],
+  };
+  return map[step]||[];
+}
+
+function renderStep(step) {
+  currentStep = Math.max(0,Math.min(totalSteps,step));
+  const canvas = document.getElementById('stepCanvas');
+  canvas.innerHTML='';
+  canvas.appendChild(drawStepSVG(currentStep));
+  document.getElementById('stepInfo').textContent = `步骤 ${currentStep} / ${totalSteps}`;
+}
+
+function nextStep() { renderStep(currentStep+1); }
+function prevStep() { renderStep(currentStep-1); }
+function resetSteps() { renderStep(0); }
+
+let playInterval=null;
+function togglePlay() {
+  const btn = document.getElementById('btnPlay');
+  if (playInterval) { clearInterval(playInterval); playInterval=null; btn.textContent='▶ 自动播放'; btn.classList.remove('running'); }
+  else { playInterval=setInterval(()=>{if(currentStep>=totalSteps){clearInterval(playInterval);playInterval=null;btn.textContent='▶ 自动播放';btn.classList.remove('running');}else{renderStep(currentStep+1);}},1800); btn.textContent='⏸ 暂停'; btn.classList.add('running'); }
+}
+
+// keyboard
+document.addEventListener('keydown',e=>{
+  if (document.getElementById('tab-flow').classList.contains('active')) {
+    if(e.key==='ArrowRight') nextStep();
+    else if(e.key==='ArrowLeft') prevStep();
+  }
+});
+
+// ─── TAB NAVIGATION ───
+const tabs = document.querySelectorAll('.nav-bar button');
+tabs.forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    tabs.forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    const tid = btn.dataset.tab;
+    document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+    document.getElementById('tab-'+tid).classList.add('active');
+    if (tid==='overview' && !document.getElementById('overviewCanvas').children.length) drawOverview();
+    if (tid==='flow') renderStep(currentStep);
+	    if (tid==='rwflow') showRWFlow(currentRW||'write');
+	    if (tid==='ntfs') showNTFS(currentNTFS||'arch');
+	    if (tid==='diskinit') showDiskInit(currentDI||'lba');
+  });
+});
+
+// ─── POPULATE GLOSSARY ───
+const gg = document.getElementById('glossaryGrid');
+glossary.forEach(t=>{
+  const card = document.createElement('div'); card.className='term-card';
+  card.innerHTML=`<span class="icon">${t.icon}</span><span class="en">${t.en}</span><h3>${t.zh}</h3><p>${t.desc}</p>`;
+  gg.appendChild(card);
+});
+
+// ─── POPULATE TIMELINE ───
+const tc = document.getElementById('timelineContainer');
+timelineSteps.forEach((ts,i)=>{
+  const div = document.createElement('div'); div.className='tl-step';
+  div.innerHTML=`<div class="dot"></div><h3>${ts.title}</h3><p style="color:var(--${ts.zone}-color)">[${ts.zone.toUpperCase()}]</p><div class="detail">${ts.detail}</div>`;
+  div.addEventListener('click',()=>{
+    document.querySelectorAll('.tl-step').forEach(s=>s.classList.remove('active'));
+    div.classList.add('active');
+  });
+  tc.appendChild(div);
+});
+
+// ─── READ/WRITE FLOW SVGs ───
+	let currentRW='write';
+
+	function showRWFlow(mode) {
+	  currentRW=mode;
+	  document.querySelectorAll('.rw-sub').forEach(b=>b.classList.remove('active'));
+	  document.getElementById(mode==='write'?'btnWriteFlow':'btnReadFlow').classList.add('active');
+	  const canvas=document.getElementById('rwCanvas');
+	  canvas.innerHTML='';
+	  canvas.appendChild(mode==='write'?drawWriteFlowSVG():drawReadFlowSVG());
+	}
+
+	function drawWriteFlowSVG() {
+	  const W=1200, H=1280;
+	  const svg=makeSvg(W,H);
+	  const g=el('g',{fontFamily:'"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif'});
+	  const defs=el('defs');
+	  defs.innerHTML='<marker id="aw" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#484f58"/></marker><marker id="awC" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#39c5cf"/></marker><marker id="awD" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#d2991d"/></marker><marker id="awA" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#f0883e"/></marker>';
+	  g.append(defs);
+
+	  const node=(x,y,w,h,text,sub,color,opts={})=>{
+	    const rx=opts.diamond?0:8;
+	    const fill=opts.fill||'rgba(255,255,255,0.02)';
+	    let shape;
+	    if(opts.diamond){
+	      shape=el('polygon',{points:`${x},${y-h/2} ${x+w/2},${y} ${x},${y+h/2} ${x-w/2},${y}`,fill,stroke:color,'stroke-width':1.5});
+	    }else{
+	      shape=el('rect',{x:x-w/2,y:y-h/2,width:w,height:h,rx,fill,stroke:color,'stroke-width':1.5});
+	      if(opts.dashed) shape.setAttribute('stroke-dasharray','5 4');
+	    }
+	    g.append(shape);
+	    const lines=text.split('\n');
+	    lines.forEach((ln,i)=>{
+	      const t=el('text',{x,y:y+(lines.length===1?5:0)+(i-(lines.length-1)/2)*15,fill:C.text,'font-size':opts.small?10:11,'text-anchor':'middle'});
+	      if(i===0&&!opts.small) t.setAttribute('font-weight','600');
+	      t.textContent=ln; g.append(t);
+	    });
+	    if(sub){const s=el('text',{x:x-w/2+8,y:y-h/2+14,fill:color,'font-size':9,'text-anchor':'start'});s.textContent=sub;g.append(s);}
+	  };
+
+	  const arr=(x1,y1,x2,y2,color)=>{
+	    const m=color==='#39c5cf'?'awC':color==='#d2991d'?'awD':color==='#f0883e'?'awA':'aw';
+	    g.append(el('line',{x1,y1,x2,y2,stroke:color||'#484f58','stroke-width':1.8,markerEnd:'url(#'+m+')'}));
+	  };
+	  const darr=(x1,y1,x2,y2,color)=>{
+	    const m=color==='#39c5cf'?'awC':color==='#d2991d'?'awD':color==='#f0883e'?'awA':'aw';
+	    g.append(el('line',{x1,y1,x2,y2,stroke:color||'#484f58','stroke-width':1.5,'stroke-dasharray':'6 4',markerEnd:'url(#'+m+')'}));
+	  };
+
+	  const lbl=(x,y,text,color)=>{const t=el('text',{x,y,fill:color||C.dim,'font-size':10,'text-anchor':'middle'});t.textContent=text;g.append(t);};
+
+	  // ═══ COMMON TOP ═══
+	  node(600,30,280,44,'WriteFile(hFile, buf, len, ...)','用户态 Ring 3',C.user,{fill:'rgba(88,166,255,0.08)'});
+	  arr(600,52,600,70);
+	  node(600,85,260,30,'syscall / sysenter → Ring 0 内核态',null,C.user,{dashed:true,small:true});
+	  arr(600,100,600,120);
+	  node(600,140,340,40,'句柄解析: ObReferenceObjectByHandle()','HANDLE → FILE_OBJECT · 权限检查',C.kernel,{fill:'rgba(163,113,247,0.06)'});
+	  arr(600,160,600,182);
+	  node(600,202,340,40,'IO 管理器: 构造 IRP_MJ_WRITE','分配 IRP · 设置 StackLocation · 关联 MDL',C.kernel,{fill:'rgba(163,113,247,0.06)'});
+	  arr(600,222,600,245);
+
+	  // Decision diamond
+	  node(600,265,200,36,'IO 类型判断?','FILE_FLAG / 缓冲策略',C.edge,{diamond:true,small:true});
+
+	  // Branch arrows
+	  arr(510,275,240,330,C.cache);  // left → Cached
+	  arr(600,283,600,330,C.vol);     // down → Direct
+	  arr(690,275,960,330,C.filter);  // right → Async
+
+	  // Labels on branch arrows
+	  lbl(370,305,'FILE_FLAG 未设置\n(默认缓冲 IO)','#39c5cf');
+	  lbl(710,310,'FILE_FLAG_NO_BUFFERING\n(需扇区对齐)','#d2991d');
+	  lbl(840,305,'FILE_FLAG_OVERLAPPED\n(异步完成通知)','#f0883e');
+
+	  // ═══ LEFT COLUMN: CACHED IO ═══
+	  const cx=240;
+	  node(cx,350,260,44,'CcCopyWrite() 调用','缓存管理器入口 · 文件系统调用',C.cache,{fill:'rgba(57,197,207,0.08)'});
+	  arr(cx,372,cx,392);
+	  node(cx,410,260,44,'检查 VACB: 缓存视图命中?','256KB 视图段 · 文件偏移映射',C.cache,{fill:'rgba(57,197,207,0.06)'});
+	  arr(cx,432,cx,452);
+	  node(cx,470,260,44,'分配 BCB · 锁定缓存页','映射系统缓存虚拟地址空间',C.cache,{fill:'rgba(57,197,207,0.06)'});
+	  arr(cx,492,cx,512);
+	  node(cx,530,260,44,'用户数据 → 系统缓存 (memcpy)','CPU 复制 · 写时复制(COW)优化',C.cache,{fill:'rgba(57,197,207,0.1)'});
+	  arr(cx,552,cx,572);
+	  node(cx,590,260,44,'元数据更新: 标记脏页 · LRU 热端','BCB dirty bit · VACB ref++ · LRU move',C.cache,{fill:'rgba(57,197,207,0.06)'});
+	  arr(cx,612,cx,635);
+	  node(cx,652,260,40,'→ 返回用户态 (立即返回成功!)','用户感知延迟 ≈ 内存复制时间',C.green,{fill:'rgba(63,185,80,0.1)'});
+
+	  // Lazy Writer path
+	  darr(cx,672,cx,710,C.cache);
+	  lbl(cx+150,692,'[异步触发]','#39c5cf');
+	  node(cx,730,280,52,'Lazy Writer 系统线程 (CcLazyWriter)','脏页比例 > 阈值 | 定时 1s | 内存压力',C.cache,{fill:'rgba(57,197,207,0.08)',dashed:true});
+	  darr(cx,756,cx,795,C.cache);
+	  node(cx,815,280,46,'延迟写入: 构造 IRP 下发文件系统','FS 处理 → 过滤驱动 → 卷管理 → 磁盘',C.cache,{fill:'rgba(57,197,207,0.08)',dashed:true,small:true});
+
+	  // Arrow from lazy to FS merge
+	  arr(cx,838,cx,870,C.cache);
+
+	  // ═══ CENTER COLUMN: DIRECT IO ═══
+	  const dx=600;
+	  node(dx,350,280,44,'直接 IO: 绕过缓存管理器','FILE_FLAG_NO_BUFFERING 已设置',C.vol,{fill:'rgba(210,153,29,0.08)'});
+	  arr(dx,372,dx,392);
+	  node(dx,410,280,44,'参数验证: 扇区对齐检查','缓冲地址 · 传输长度 · 扇区大小倍数',C.vol,{fill:'rgba(210,153,29,0.06)'});
+	  arr(dx,432,dx,452);
+	  node(dx,470,280,48,'IO 管理器直接创建 MDL\nMmProbeAndLockPages()','锁定用户缓冲物理页 · 非分页',C.vol,{fill:'rgba(210,153,29,0.06)'});
+	  arr(dx,494,dx,516);
+	  node(dx,536,280,44,'IRP 下发文件系统 (同步等待)','不经过 CcCopyWrite · 直接进入 FS',C.vol,{fill:'rgba(210,153,29,0.1)'});
+	  arr(dx,558,dx,590);
+
+	  // ═══ RIGHT COLUMN: ASYNC IO ═══
+	  const ax=960;
+	  node(ax,350,260,44,'异步 IO: 准备异步上下文','FILE_FLAG_OVERLAPPED · 事件/APC/IOCP',C.filter,{fill:'rgba(240,136,62,0.08)'});
+	  arr(ax,372,ax,392);
+	  node(ax,410,260,44,'创建 IRP + 完成回调上下文','IRP.UserIosb · APC 路由 · IOCP 关联',C.filter,{fill:'rgba(240,136,62,0.06)'});
+	  arr(ax,432,ax,452);
+	  node(ax,470,260,44,'IRP 加入待处理队列','返回 ERROR_IO_PENDING (立即!)',C.filter,{fill:'rgba(240,136,62,0.1)'});
+	  arr(ax,492,ax,512);
+	  node(ax,530,260,44,'→ 用户态立即返回','用户获取 PENDING 状态',C.filter,{fill:'rgba(240,136,62,0.1)'});
+	  darr(ax,552,ax,585,C.filter);
+	  lbl(ax+140,570,'[异步处理]','#f0883e');
+	  node(ax,605,270,48,'系统工作线程池处理 IRP','可指定缓存 IO 或直接 IO 路径',C.filter,{fill:'rgba(240,136,62,0.06)',dashed:true});
+	  darr(ax,629,ax,660,C.filter);
+	  node(ax,678,260,44,'进入文件系统处理','使用缓存或直接 IO 路径',C.filter,{fill:'rgba(240,136,62,0.06)',dashed:true,small:true});
+	  arr(ax,700,ax,730,C.filter);
+
+	  // ═══ MERGE ARROWS TO FS ═══
+	  // From cached (lazy writer path) going down
+	  arr(cx,893,390,945,C.cache);
+	  // From direct going down
+	  arr(dx,610,dx,945,C.vol);
+	  // From async going down
+	  arr(ax,752,810,945,C.filter);
+
+	  // Labels
+	  lbl(300,935,'延迟写入\n(Cached 路径)','#39c5cf');
+	  lbl(600,935,'同步等待\n(Direct 路径)','#d2991d');
+	  lbl(900,935,'异步处理\n(Async 路径)','#f0883e');
+
+	  // ═══ COMMON BOTTOM: FS → FILTER → VOLUME → DISK ═══
+	  node(600,968,550,56,'NTFS 文件系统处理\nFCB 定位 → MFT 记录 → $Bitmap 分配簇 → RunList 更新 → $LogFile 写事务日志','输出: 连续 LCN 的磁盘 IRP',C.fs,{fill:'rgba(63,185,80,0.06)',small:true});
+	  arr(600,996,600,1020);
+	  node(600,1042,500,44,'过滤驱动层: 防病毒扫描 · BitLocker 加密 · 去重 · 压缩','FltMgr.sys · 迷你过滤驱动 · 可拦截/修改/完成 IRP',C.filter,{fill:'rgba(240,136,62,0.06)',small:true});
+	  arr(600,1064,600,1088);
+	  node(600,1110,500,44,'卷管理器: LCN → LBA 映射 · 分区偏移计算','PartMgr.sys / DmIo.sys · GPT/MBR 分区表 · 动态卷布局',C.vol,{fill:'rgba(210,153,29,0.06)',small:true});
+	  arr(600,1132,600,1156);
+	  node(600,1178,460,44,'磁盘类驱动: disk.sys → storport.sys → 厂商 miniport','SRB 构造 · 电梯调度 · NCQ · DMA 设置',C.hw,{fill:'rgba(248,81,73,0.08)',small:true});
+	  arr(600,1200,600,1224);
+	  node(600,1246,360,44,'💿 物理磁盘: HDD 盘片写入 / SSD NAND 编程 / NVMe','扇区寻址 · DMA 传输 · 写入确认',C.hw,{fill:'rgba(248,81,73,0.12)'});
+
+	  // ═══ COMPLETION: back to three paths ═══
+	  // Right side completion annotations
+	  lbl(820,1260,'═══════════════════════════════','#484f58');
+
+	  // Cached completion
+	  lbl(240,1270,'Cached 完成: 延迟写入完成 → PFN 状态更新 → 脏页标记清除\n(用户早已返回，不感知此过程)','#39c5cf');
+
+	  // Direct completion
+	  lbl(600,1270,'Direct 完成: 中断 → ISR → DPC → CompletionRoutine\nIRP 回卷 → 唤醒等待线程 → 用户态 WriteFile 返回','#d2991d');
+
+	  // Async completion
+	  lbl(960,1270,'Async 完成: 中断 → ISR → DPC → SetEvent / Queue APC / Post IOCP\n用户态 GetOverlappedResult / WaitForSingleObject 获取结果','#f0883e');
+
+	  svg.append(g); return svg;
+	}
+
+	function drawReadFlowSVG() {
+	  const W=1200, H=1150;
+	  const svg=makeSvg(W,H);
+	  const g=el('g',{fontFamily:'"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif'});
+	  const defs=el('defs');
+	  defs.innerHTML='<marker id="ar" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#484f58"/></marker><marker id="arC" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#39c5cf"/></marker><marker id="arD" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#d2991d"/></marker><marker id="arA" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#f0883e"/></marker>';
+	  g.append(defs);
+
+	  const node=(x,y,w,h,text,sub,color,opts={})=>{
+	    const rx=opts.diamond?0:8;
+	    const fill=opts.fill||'rgba(255,255,255,0.02)';
+	    if(opts.diamond){
+	      g.append(el('polygon',{points:`${x},${y-h/2} ${x+w/2},${y} ${x},${y+h/2} ${x-w/2},${y}`,fill,stroke:color,'stroke-width':1.5}));
+	    }else{
+	      const r=el('rect',{x:x-w/2,y:y-h/2,width:w,height:h,rx,fill,stroke:color,'stroke-width':1.5});
+	      if(opts.dashed) r.setAttribute('stroke-dasharray','5 4');
+	      g.append(r);
+	    }
+	    const lines=text.split('\n');
+	    lines.forEach((ln,i)=>{
+	      const t=el('text',{x,y:y+(lines.length===1?5:0)+(i-(lines.length-1)/2)*15,fill:C.text,'font-size':opts.small?10:11,'text-anchor':'middle'});
+	      if(i===0&&!opts.small) t.setAttribute('font-weight','600');
+	      t.textContent=ln; g.append(t);
+	    });
+	    if(sub){const s=el('text',{x:x-w/2+8,y:y-h/2+14,fill:color,'font-size':9,'text-anchor':'start'});s.textContent=sub;g.append(s);}
+	  };
+
+	  const arr=(x1,y1,x2,y2,color)=>{
+	    const m=color==='#39c5cf'?'arC':color==='#d2991d'?'arD':color==='#f0883e'?'arA':'ar';
+	    g.append(el('line',{x1,y1,x2,y2,stroke:color||'#484f58','stroke-width':1.8,markerEnd:'url(#'+m+')'}));
+	  };
+	  const darr=(x1,y1,x2,y2,color)=>{
+	    const m=color==='#39c5cf'?'arC':color==='#d2991d'?'arD':color==='#f0883e'?'arA':'ar';
+	    g.append(el('line',{x1,y1,x2,y2,stroke:color||'#484f58','stroke-width':1.5,'stroke-dasharray':'6 4',markerEnd:'url(#'+m+')'}));
+	  };
+	  const lbl=(x,y,text,color)=>{const t=el('text',{x,y,fill:color||C.dim,'font-size':10,'text-anchor':'middle'});t.textContent=text;g.append(t);};
+
+	  // ═══ COMMON TOP ═══
+	  node(600,30,280,44,'ReadFile(hFile, buf, len, ...)','用户态 Ring 3',C.user,{fill:'rgba(88,166,255,0.08)'});
+	  arr(600,52,600,70);
+	  node(600,85,260,30,'syscall / sysenter → Ring 0',null,C.user,{dashed:true,small:true});
+	  arr(600,100,600,120);
+	  node(600,140,340,40,'句柄解析: ObReferenceObjectByHandle()','HANDLE → FILE_OBJECT · 权限检查',C.kernel,{fill:'rgba(163,113,247,0.06)'});
+	  arr(600,160,600,182);
+	  node(600,202,340,40,'IO 管理器: 构造 IRP_MJ_READ','分配 IRP · 设置 StackLocation · 读操作标记',C.kernel,{fill:'rgba(163,113,247,0.06)'});
+	  arr(600,222,600,245);
+	  node(600,265,200,36,'IO 类型判断?',null,C.edge,{diamond:true,small:true});
+
+	  // Branch arrows
+	  arr(510,275,240,340,C.cache);
+	  arr(600,283,600,340,C.vol);
+	  arr(690,275,960,340,C.filter);
+	  lbl(370,315,'默认缓冲 IO\n(CcCopyRead)','#39c5cf');
+	  lbl(710,320,'FILE_FLAG_NO_BUFFERING\n(需扇区对齐)','#d2991d');
+	  lbl(840,315,'FILE_FLAG_OVERLAPPED\n(异步完成)','#f0883e');
+
+	  // ═══ LEFT: CACHED READ ═══
+	  const cx=240;
+	  node(cx,365,270,44,'CcCopyRead() → 检查 VACB','文件偏移 → 缓存视图段查找',C.cache,{fill:'rgba(57,197,207,0.08)'});
+	  arr(cx,387,cx,410);
+	  node(cx,430,180,30,'缓存命中?','HIT / MISS',C.cache,{diamond:true,small:true});
+
+	  // Hit path
+	  arr(cx-70,430,cx-120,460,C.green);
+	  lbl(cx-120,452,'命中','#3fb950');
+	  node(cx-120,480,180,44,'系统缓存 → 用户缓冲区','memcpy · 无需磁盘 IO',C.green,{fill:'rgba(63,185,80,0.08)'});
+	  arr(cx-120,502,cx-120,525);
+	  node(cx-120,542,180,40,'→ 返回成功 (快速路径)','零磁盘 IO · 微秒级延迟',C.green,{fill:'rgba(63,185,80,0.12)'});
+
+	  // Miss path
+	  arr(cx+70,430,cx+120,460,C.vol);
+	  lbl(cx+120,452,'未命中','#d2991d');
+	  node(cx+120,480,200,44,'触发预读 (Read-Ahead)','顺序访问检测 · 异步预取',C.vol,{fill:'rgba(210,153,29,0.06)'});
+	  arr(cx+120,502,cx+120,525);
+	  node(cx+120,545,200,52,'FS 下发磁盘读 IRP → 数据写入缓存\n→ 从缓存复制到用户缓冲区','两次数据移动: 磁盘→缓存→用户',C.vol,{fill:'rgba(210,153,29,0.08)',small:true});
+	  arr(cx+120,571,cx+120,595);
+	  node(cx+120,615,200,40,'→ 返回成功 (缓存填充)','延迟 = 磁盘 IO + 内存复制',C.vol,{fill:'rgba(210,153,29,0.1)'});
+
+	  // ═══ CENTER: DIRECT READ ═══
+	  const dx=600;
+	  node(dx,365,280,44,'直接 IO: 绕过缓存管理器','FILE_FLAG_NO_BUFFERING',C.vol,{fill:'rgba(210,153,29,0.08)'});
+	  arr(dx,387,dx,410);
+	  node(dx,430,280,44,'参数验证: 扇区对齐检查','缓冲地址 · 传输长度 · 扇区倍数',C.vol,{fill:'rgba(210,153,29,0.06)'});
+	  arr(dx,452,dx,475);
+	  node(dx,495,280,48,'创建 MDL · MmProbeAndLockPages()\nIO 管理器直接锁定用户缓冲','DMA 可直接传输到用户地址',C.vol,{fill:'rgba(210,153,29,0.06)'});
+	  arr(dx,519,dx,545);
+	  node(dx,565,280,44,'IRP 下发文件系统 (同步等待)','读数据直接到用户缓冲 (不经过缓存)',C.vol,{fill:'rgba(210,153,29,0.1)'});
+	  arr(dx,587,dx,615);
+
+	  // ═══ RIGHT: ASYNC READ ═══
+	  const ax=960;
+	  node(ax,365,260,44,'异步 IO: 准备异步上下文','FILE_FLAG_OVERLAPPED · Event/APC/IOCP',C.filter,{fill:'rgba(240,136,62,0.08)'});
+	  arr(ax,387,ax,410);
+	  node(ax,430,260,44,'创建 IRP + 异步完成回调','IRP.UserIosb · OVERLAPPED 结构关联',C.filter,{fill:'rgba(240,136,62,0.06)'});
+	  arr(ax,452,ax,475);
+	  node(ax,495,260,44,'IRP 加入待处理队列','→ 返回 ERROR_IO_PENDING',C.filter,{fill:'rgba(240,136,62,0.1)'});
+	  arr(ax,517,ax,545);
+	  node(ax,565,260,44,'系统工作线程处理 IRP','使用缓存或直接 IO 读取数据',C.filter,{fill:'rgba(240,136,62,0.06)',dashed:true});
+	  arr(ax,587,ax,615);
+
+	  // ═══ MERGE TO FS ═══
+	  // Cache miss path: need FS→disk to fill cache
+	  arr(cx+120,635,cx+120,680,C.vol);
+	  arr(cx+120,680,410,730,C.vol);
+	  // Direct path
+	  arr(dx,637,dx,730,C.vol);
+	  // Async path
+	  arr(ax,637,790,730,C.filter);
+	  lbl(300,725,'缓存未命中\n需磁盘 IO','#d2991d');
+	  lbl(600,725,'直接磁盘读','#d2991d');
+	  lbl(900,725,'异步磁盘读','#f0883e');
+
+	  // ═══ COMMON FS BOTTOM ═══
+	  node(600,755,550,56,'NTFS 文件系统处理\nFCB 定位 → MFT 记录 → RunList 解析 LCN → $Bitmap 验证已分配','输出: 物理扇区范围 IRP',C.fs,{fill:'rgba(63,185,80,0.06)',small:true});
+	  arr(600,783,600,808);
+	  node(600,830,500,44,'过滤驱动层: 防病毒扫描(读时扫描) · BitLocker 解密 · 去重还原','FltMgr.sys · 透明解密 · 读取时解压',C.filter,{fill:'rgba(240,136,62,0.06)',small:true});
+	  arr(600,852,600,876);
+	  node(600,898,500,44,'卷管理器: LCN → LBA 映射 · 分区偏移计算','PartMgr.sys/DmIo.sys · 读取扇区地址计算',C.vol,{fill:'rgba(210,153,29,0.06)',small:true});
+	  arr(600,920,600,944);
+	  node(600,966,460,44,'磁盘类驱动: disk.sys → storport.sys → 厂商 miniport','SRB 构造 · NCQ · DMA 设置 · HBA 编程',C.hw,{fill:'rgba(248,81,73,0.08)',small:true});
+	  arr(600,988,600,1012);
+	  node(600,1034,360,44,'💿 物理磁盘: HDD 磁头寻道 / SSD 页读取 / NVMe','扇区读取 · DMA → 内存 · 读完成中断',C.hw,{fill:'rgba(248,81,73,0.12)'});
+
+	  // ═══ COMPLETION ═══
+	  lbl(240,1090,'Cached 读完成: 数据已在用户缓冲 → 返回\n(命中:微秒级 / 未命中:毫秒级)','#39c5cf');
+	  lbl(600,1090,'Direct 读完成: 中断→ISR→DPC→CompletionRoutine\nIRP 回卷→唤醒线程→ReadFile 返回','#d2991d');
+	  lbl(960,1090,'Async 读完成: 中断→ISR→DPC\nSetEvent/QueueAPC/PostIOCP→用户获取数据','#f0883e');
+
+	  // Legend at bottom
+	  const ly=1140;
+	  [{c:'#39c5cf',l:'缓存IO (Buffered)'},{c:'#d2991d',l:'直接IO (Direct)'},{c:'#f0883e',l:'异步IO (Async)'}].forEach((li,i)=>{
+	    g.append(el('circle',{cx:340+i*260,cy:ly,r:6,fill:li.c}));
+	    const t=el('text',{x:354+i*260,y:ly+5,fill:C.dim,'font-size':11,'text-anchor':'start'});
+	    t.textContent=li.l; g.append(t);
+	  });
+
+	  svg.append(g); return svg;
+	}
+
+	// ─── NTFS DETAILED SVGs ───
+	let currentNTFS='arch';
+
+	function showNTFS(mode) {
+	  currentNTFS=mode;
+	  document.querySelectorAll('.ntfs-sub').forEach(b=>b.classList.remove('active'));
+	  document.getElementById(mode==='write'?'btnNTFSWrite':mode==='read'?'btnNTFSRead':'btnNTFSArch').classList.add('active');
+	  const canvas=document.getElementById('ntfsCanvas');
+	  canvas.innerHTML='';
+	  if(mode==='write') canvas.appendChild(drawNTFSWriteSVG());
+	  else if(mode==='read') canvas.appendChild(drawNTFSReadSVG());
+	  else canvas.appendChild(drawNTFSArchSVG());
+	}
+
+	function drawNTFSArchSVG() {
+	  const W=1200, H=1320;
+	  const svg=makeSvg(W,H);
+	  const g=el('g',{fontFamily:'"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif'});
+	  const defs=el('defs');
+	  defs.innerHTML='<marker id="na" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#484f58"/></marker>';
+	  g.append(defs);
+
+	  const node=(x,y,w,h,text,sub,color,opts={})=>{
+	    const fill=opts.fill||'rgba(255,255,255,0.02)';
+	    const r=el('rect',{x:x-w/2,y:y-h/2,width:w,height:h,rx:opts.diamond?0:8,fill,stroke:color,'stroke-width':1.5});
+	    if(opts.dashed) r.setAttribute('stroke-dasharray','5 4');
+	    g.append(r);
+	    const lines=text.split('\n');
+	    lines.forEach((ln,i)=>{
+	      const t=el('text',{x,y:y+(lines.length===1?5:0)+(i-(lines.length-1)/2)*(opts.small?12:14),fill:opts.dim?C.dim:C.text,'font-size':opts.small?10:11,'text-anchor':'middle'});
+	      if(i===0&&!opts.small&&!opts.dim) t.setAttribute('font-weight','600');
+	      t.textContent=ln; g.append(t);
+	    });
+	    if(sub){const s=el('text',{x:x-w/2+8,y:y-h/2+14,fill:color,'font-size':9,'text-anchor':'start'});s.textContent=sub;g.append(s);}
+	  };
+
+	  const arr=(x1,y1,x2,y2,color)=>{
+	    g.append(el('line',{x1,y1,x2,y2,stroke:color||'#484f58','stroke-width':1.8,markerEnd:'url(#na)'}));
+	  };
+	  const darr=(x1,y1,x2,y2,color)=>{
+	    g.append(el('line',{x1,y1,x2,y2,stroke:color||'#484f58','stroke-width':1.5,'stroke-dasharray':'6 4',markerEnd:'url(#na)'}));
+	  };
+	  const lbl=(x,y,text,color,size)=>{const t=el('text',{x,y,fill:color||C.dim,'font-size':size||10,'text-anchor':'middle'});t.textContent=text;g.append(t);};
+
+	  // ═══════════════ SECTION 1: 卷布局 ═══════════════
+	  lbl(600,18,'▌NTFS 卷磁盘布局','#58a6ff',13);
+	  // VBR
+	  node(120,55,180,55,'$Boot (VBR)\n卷引导记录 · 0号扇区','BIOS Parameter Block\n→ MFT 起始 LCN',C.hw,{fill:'rgba(248,81,73,0.1)',small:true});
+	  arr(210,55,300,55);
+	  lbl(255,45,'指向','#d2991d');
+
+	  // MFT Zone
+	  node(500,55,340,55,'MFT Zone (预留卷空间 ~12.5%)\n$MFT(0) · $MFTMirr(1) · $LogFile(2)\n$Volume(3) · $AttrDef(4) · . (5=Root目录)\n$Bitmap(6) · $Boot(7) · $BadClus(8)\n$Secure(9) · $UpCase(10) · $Extend(11)','前16条MFT记录=元数据文件\n每个文件/目录 = 1条MFT记录',C.fs,{fill:'rgba(63,185,80,0.06)',small:true});
+	  arr(670,55,800,55);
+	  lbl(735,45,'剩余空间','#c9d1d9');
+
+	  // Data Area
+	  node(970,55,240,55,'数据区 (Data Area)\n常规文件数据 + 目录索引\n+ 扩展 MFT 记录','按簇分配 · 默认 4KB/簇',C.vol,{fill:'rgba(210,153,29,0.06)',small:true});
+
+	  // ═══════════════ SECTION 2: MFT 记录结构 ═══════════════
+	  lbl(600,108,'▌MFT 记录内部结构 (每条记录 1KB = 1024 字节)','#3fb950',13);
+
+	  // Record Header box
+	  node(200,170,280,100,'记录头 (Record Header)','',C.fs,{fill:'rgba(63,185,80,0.06)'});
+	  // Header fields
+	  const hdrFields=[
+	    [70,142,'签名 "FILE"\n(4字节)'],
+	    [170,142,'Fixup 数组偏移\n更新序列号'],
+	    [270,142,'LSN 日志序号\n(8字节)'],
+	    [70,175,'Seq# 序列号\n复用计数'],
+	    [170,175,'硬链接计数\n(2字节)'],
+	    [270,175,'第一个属性偏移\n→ 指向属性区'],
+	  ];
+	  hdrFields.forEach(([fx,fy,ft])=>{
+	    const t=el('text',{x:fx,y:fy,fill:C.dim,'font-size':9,'text-anchor':'start'});
+	    ft.split('\n').forEach((ln,i)=>t.appendChild(el('tspan',{x:fx,dy:i===0?0:12})).textContent=ln);
+	    g.append(t);
+	  });
+
+	  // Arrow from header to attributes
+	  arr(340,170,520,170);
+
+	  // Attributes list
+	  node(730,170,520,110,'属性列表 (Attribute List)','',C.accent,{fill:'rgba(88,166,255,0.04)'});
+	  const attrs=[
+	    [580,132,'① $STANDARD_INFORMATION','时间戳 · 属性标志(NTFS权限)'],
+	    [580,155,'② $FILE_NAME','文件名 · 父目录 MFT 引用'],
+	    [580,178,'③ $DATA (常驻 或 非常驻)','常驻:数据在MFT内(小文件<~700B) | 非常驻:Run List→簇'],
+	    [580,201,'④ $INDEX_ROOT / $INDEX_ALLOCATION','目录 B+ 树 · 文件名排序'],
+	    [580,224,'⑤ $ATTRIBUTE_LIST','属性过多时溢出至此(极少使用)'],
+	  ];
+	  attrs.forEach(([ax,ay,at,as])=>{
+	    const t=el('text',{x:ax,y:ay,fill:C.text,'font-size':10,'text-anchor':'start'});t.textContent=at;g.append(t);
+	    const s=el('text',{x:ax,y:ay+12,fill:C.dim,'font-size':9,'text-anchor':'start'});s.textContent=as;g.append(s);
+	  });
+
+	  // ═══════════════ SECTION 3: 常驻 vs 非常驻 ═══════════════
+	  lbl(600,258,'▌$DATA 属性的两种形态: 常驻 vs 非常驻','#39c5cf',13);
+
+	  // Resident
+	  node(320,330,380,110,'常驻属性 (Resident)\n━━━━━━━━━━━━━━━\n'+
+	    '文件数据直接存储在 MFT 记录内\n数据紧跟在属性头之后\n文件大小 < 约 700 字节时自动使用\n'+
+	    '读/写仅需一次 MFT 记录 IO','小文件·目录·硬链接',C.cache,{fill:'rgba(57,197,207,0.06)',small:true});
+
+	  // Non-resident
+	  node(880,330,380,110,'非常驻属性 (Non-Resident)\n━━━━━━━━━━━━━━━━━\n'+
+	    'MFT 记录中仅存储 Run List (簇流列表)\n实际数据存储在磁盘数据区的簇中\nRun List 描述数据簇在磁盘上的位置','大文件(>~700B) · 目录索引',C.vol,{fill:'rgba(210,153,29,0.06)',small:true});
+
+	  // Arrow between them
+	  darr(510,330,690,330,C.dim);
+
+	  // ═══════════════ SECTION 4: Run List 详解 ═══════════════
+	  lbl(600,405,'▌Run List (簇流列表) — 从逻辑偏移到物理地址的桥梁','#d2991d',13);
+
+	  // File offset to VCN
+	  node(200,470,260,70,'文件偏移 → VCN 转换\n━━━━━━━━━━━\n文件偏移 / 簇大小 = VCN\n(虚拟簇号,从0开始编号)','VCN: Virtual Cluster Number',C.accent,{fill:'rgba(88,166,255,0.04)',small:true});
+	  arr(330,470,430,470);
+
+	  // Run List
+	  node(600,470,230,70,'Run List (簇流列表)\n━━━━━━━━━━━\nVCN=0→LCN=1000, 簇数=8\nVCN=8→LCN=2500, 簇数=4\n碎片化文件会有多个 Run','每个 Run: (起始LCN, 连续簇数)',C.vol,{fill:'rgba(210,153,29,0.06)',small:true});
+	  arr(715,470,830,470);
+
+	  // LCN to disk
+	  node(1000,470,200,70,'LCN → 物理地址\n━━━━━━━━\nLCN×簇大小 = 卷内字节偏移\n+ VBR 分区偏移 = 磁盘 LBA','LCN: Logical Cluster Number',C.hw,{fill:'rgba(248,81,73,0.06)',small:true});
+
+	  // Example
+	  lbl(600,520,'示例: 一个 64KB 文件占用 16 个簇(4KB/簇)，连续存储 → Run List: [LCN:1000, 16] | 若碎片化 → [LCN:1000,10] + [LCN:3000,6]','#8b949e',10);
+
+	  // ═══════════════ SECTION 5: 核心数据结构关系 ═══════════════
+	  lbl(600,562,'▌NTFS 核心数据结构关系图','#a371f7',13);
+
+	  // $Bitmap
+	  node(200,630,240,80,'$Bitmap (簇分配位图)\n━━━━━━━━━━━━━\n每个 bit = 一个簇的分配状态\n1=已分配  0=空闲\n卷中所有簇的唯一分配追踪器','元数据文件 · MFT 条目号 6',C.green,{fill:'rgba(63,185,80,0.06)',small:true});
+
+	  // $LogFile
+	  node(500,630,240,80,'$LogFile (事务日志)\n━━━━━━━━━━━━━\nWrite-Ahead Logging (WAL)\n先写日志 → 再写数据\nRedo/Undo 记录保证一致性\n系统崩溃后重放恢复','元数据文件 · MFT 条目号 2',C.green,{fill:'rgba(63,185,80,0.06)',small:true});
+
+	  // Run List
+	  node(800,630,240,80,'Run List (簇流列表)\n━━━━━━━━━━━━━\nVCN→LCN 映射对列表\n每个 Run: [起始LCN] [簇数]\nLCN 采用可变长度编码压缩存储\n碎片化 = Run 数量增多','位于 $DATA 属性的非常驻部分',C.vol,{fill:'rgba(210,153,29,0.06)',small:true});
+
+	  // B+ Tree
+	  node(1050,630,200,80,'目录 B+ 树\n━━━━━━━\n$INDEX_ROOT: 根节点\n$INDEX_ALLOC: 子节点\n按文件名 Unicode 排序\n大目录自动分层','文件名→MFT记录号快速查找',C.accent,{fill:'rgba(88,166,255,0.04)',small:true});
+
+	  // ═══════════════ SECTION 6: FCB/SCB/CCB 内存链 ═══════════════
+	  lbl(600,738,'▌文件打开后的内存数据结构链','#a371f7',13);
+
+	  node(200,800,260,65,'FCB (File Control Block)\n━━━━━━━━━━━━━\n文件系统为每个打开的文件创建\n关联一个 MFT 记录\n维护文件属性、大小、锁信息','每个文件一个 FCB',C.cache,{fill:'rgba(57,197,207,0.06)',small:true});
+	  arr(330,800,430,800);
+
+	  node(600,800,260,65,'SCB (Stream Control Block)\n━━━━━━━━━━━━━━━\n关联到文件的特定数据流\nNTFS 支持多流 (默认 ::$DATA)\n管理 Run List 缓存','每个流一个 SCB',C.vol,{fill:'rgba(210,153,29,0.06)',small:true});
+	  arr(730,800,830,800);
+
+	  node(1000,800,200,65,'CCB (Context Control Block)\n━━━━━━━━━━━━━━━\n每次打开操作的上下文\n文件偏移指针 · 共享模式\n用户访问权限','每次 CreateFile 一个 CCB',C.accent,{fill:'rgba(88,166,255,0.04)',small:true});
+
+	  // ═══════════════ SECTION 7: 卷管理集成 ═══════════════
+	  lbl(600,890,'▌从文件偏移到物理扇区的完整映射链','#c9d1d9',13);
+
+	  node(100,960,200,55,'用户 ReadFile/WriteFile\n文件句柄 + 字节偏移 + 长度',null,C.user,{fill:'rgba(88,166,255,0.06)',small:true});
+	  arr(200,960,300,960);
+	  node(400,960,200,55,'FILE_OBJECT → FCB\n→ SCB → Run List\n偏移 → VCN → LCN',null,C.fs,{fill:'rgba(63,185,80,0.06)',small:true});
+	  arr(500,960,600,960);
+	  node(700,960,200,55,'卷管理器\nLCN × 簇大小 + 分区偏移\n→ LBA (物理扇区号)',null,C.vol,{fill:'rgba(210,153,29,0.06)',small:true});
+	  arr(800,960,900,960);
+	  node(1000,960,200,55,'磁盘驱动\ndisk.sys → storport.sys\n→ 物理磁盘',null,C.hw,{fill:'rgba(248,81,73,0.06)',small:true});
+
+	  // ═══════════════ SECTION 8: 写入时涉及的 NTFS 操作 ═══════════════
+	  lbl(600,1040,'▌写入操作涉及的 NTFS 元数据更新','#3fb950',13);
+
+	  node(200,1100,340,80,'① $Bitmap 查询 & 更新\n━━━━━━━━━━━━━\n扫描位图查找空闲簇 → 标记为已分配\n如果连续空闲簇不足则找多个碎片区间\n更新后在内存缓存 $Bitmap 修改\n日志记录 Bitmap 的 Redo/Undo','分配策略: 最佳匹配 + 连续性优先',C.green,{fill:'rgba(63,185,80,0.04)',small:true});
+	  node(600,1100,340,80,'② $LogFile 写事务日志\n━━━━━━━━━━━━━\nWAL 原则: 先写日志再写数据\n记录所有元数据修改的 Redo/Undo 信息\n包含: MFT 记录变化、$Bitmap 变化\n系统崩溃后用 $LogFile 重放恢复','原子性保证: 要么全部完成,要么全部回滚',C.green,{fill:'rgba(63,185,80,0.04)',small:true});
+	  node(1000,1100,340,80,'③ MFT 记录更新\n━━━━━━━━━\n更新 $DATA.RunList (簇位置变化)\n更新 $STANDARD_INFORMATION (时间戳)\n更新 FileSize (文件大小变化)\n更新 $FILE_NAME (如重命名)','非常驻属性的 Run List 写入 MFT 记录',C.green,{fill:'rgba(63,185,80,0.04)',small:true});
+
+	  // Legend
+	  const ly=1310;
+	  [{c:'#3fb950',l:'NTFS 元数据'},{c:'#39c5cf',l:'内存结构'},{c:'#d2991d',l:'映射/索引'},{c:'#a371f7',l:'关系链路'},{c:'#f85149',l:'磁盘实体'}].forEach((li,i)=>{
+	    g.append(el('circle',{cx:280+i*160,cy:ly,r:6,fill:li.c}));
+	    const t=el('text',{x:294+i*160,y:ly+5,fill:C.dim,'font-size':11,'text-anchor':'start'});t.textContent=li.l;g.append(t);
+	  });
+
+	  svg.append(g); return svg;
+	}
+
+	function drawNTFSWriteSVG() {
+	  const W=1200, H=1300;
+	  const svg=makeSvg(W,H);
+	  const g=el('g',{fontFamily:'"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif'});
+	  const defs=el('defs');
+	  defs.innerHTML='<marker id="nw" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#484f58"/></marker>';
+	  g.append(defs);
+
+	  const node=(x,y,w,h,text,sub,color,opts={})=>{
+	    const fill=opts.fill||'rgba(255,255,255,0.02)';
+	    const r=el('rect',{x:x-w/2,y:y-h/2,width:w,height:h,rx:8,fill,stroke:color,'stroke-width':1.5});
+	    if(opts.dashed) r.setAttribute('stroke-dasharray','5 4');
+	    g.append(r);
+	    const lines=text.split('\n');
+	    lines.forEach((ln,i)=>{
+	      const t=el('text',{x,y:y+(lines.length===1?5:0)+(i-(lines.length-1)/2)*(opts.small?12:14),fill:opts.dim?C.dim:C.text,'font-size':opts.small?10:11,'text-anchor':'middle'});
+	      if(i===0&&!opts.small&&!opts.dim) t.setAttribute('font-weight','600');
+	      t.textContent=ln; g.append(t);
+	    });
+	    if(sub){const s=el('text',{x:x-w/2+8,y:y-h/2+14,fill:color,'font-size':9,'text-anchor':'start'});s.textContent=sub;g.append(s);}
+	  };
+
+	  const arr=(x1,y1,x2,y2,color)=>{
+	    g.append(el('line',{x1,y1,x2,y2,stroke:color||'#484f58','stroke-width':1.8,markerEnd:'url(#nw)'}));
+	  };
+	  const darr=(x1,y1,x2,y2,color)=>{
+	    g.append(el('line',{x1,y1,x2,y2,stroke:color||'#484f58','stroke-width':1.5,'stroke-dasharray':'6 4',markerEnd:'url(#nw)'}));
+	  };
+	  const lbl=(x,y,text,color,size)=>{const t=el('text',{x,y,fill:color||C.dim,'font-size':size||10,'text-anchor':'middle'});t.textContent=text;g.append(t);};
+
+	  const CX=600;
+	  let cy=25;
+
+	  // Step 1: Entry
+	  node(CX,cy,500,44,'IRP_MJ_WRITE 到达 NTFS 文件系统驱动 (NTFS.sys)','IRP 携带: FILE_OBJECT · 写入偏移 · 长度 · MDL(用户缓冲)',C.accent,{fill:'rgba(88,166,255,0.06)',small:true});
+	  cy+=37; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 2: FCB acquisition
+	  node(CX,cy,500,44,'① 获取 FCB (File Control Block)','IRP → 设备栈 → FILE_OBJECT → FsContext → FCB',C.fs,{fill:'rgba(63,185,80,0.06)',small:true});
+	  cy+=37; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 3: Lock & Permission check
+	  node(CX,cy,500,38,'② 获取 FCB 排他锁 · 权限检查','ExclusiveLock(FCB.MainResource) · ACCESS_MASK 验证',C.fs,{fill:'rgba(63,185,80,0.04)',small:true});
+	  cy+=34; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 4: Check if new clusters needed
+	  node(CX,cy,500,50,'③ 计算新文件大小 · 判断是否需要分配新簇','新偏移+长度  vs  当前文件大小  vs  已分配簇数',C.vol,{fill:'rgba(210,153,29,0.06)',small:true});
+	  cy+=40; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 5: $Bitmap lookup
+	  node(CX,cy,500,54,'④ 查询 $Bitmap 查找空闲簇','遍历位图: 逐字节扫描空闲 bit → 转换为 LCN\n优先在当前 Run 后查找连续空闲簇 (连续性优化)\n不足时分配非连续簇 → 产生新 Run','如果文件已有分配的簇,先尝试扩展最后一个 Run',C.green,{fill:'rgba(63,185,80,0.06)',small:true});
+	  lbl(CX+280,cy,'写入量 > 尾簇剩余空间','#d2991d',9);
+	  cy+=42; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 6: $LogFile begin transaction
+	  node(CX,cy,500,54,'⑤ $LogFile 写事务开始 (Begin Transaction)','WAL 原则: 在所有元数据修改前先写日志\n记录 Redo: 新簇 LCN · 新 Run List · 新文件大小\n记录 Undo: 旧 Run List · 旧文件大小 · $Bitmap 原状态\n日志记录写入 $LogFile 的日志页 (Log Page)','崩溃恢复: 事务未完成 → 用 Undo 回滚',C.green,{fill:'rgba(63,185,80,0.06)',small:true});
+	  cy+=42; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 7: Update $Bitmap
+	  node(CX,cy,500,48,'⑥ 更新 $Bitmap (标记簇为已分配)','将对应 bit 置为 1: 记录在 $Bitmap 的 Transaction 中\n$Bitmap 变更本身也记录在 $LogFile 中','$Bitmap 元数据文件的 MFT 记录也需更新',C.green,{fill:'rgba(63,185,80,0.04)',small:true});
+	  cy+=39; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 8: Update Run List
+	  node(CX,cy,500,54,'⑦ 更新 MFT 记录中的 Run List','在 MFT 记录中修改 $DATA 属性的非常驻 Run List\n新 Run 添加: [起始LCN:新分配的簇] [连续簇数]\n如能合并到最后一个 Run: 增加已有 Run 的簇数\nRun List 采用可变长度编码 (VLE) 压缩存储','Run List 更新写入 MFT 记录的属性区',C.vol,{fill:'rgba(210,153,29,0.06)',small:true});
+	  cy+=42; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 9: Update timestamps
+	  node(CX,cy,500,40,'⑧ 更新 $STANDARD_INFORMATION (时间戳)','修改时间(LastWriteTime) · 访问时间(LastAccessTime) · MFT修改时间',C.fs,{fill:'rgba(63,185,80,0.04)',small:true});
+	  cy+=35; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 10: Update file size
+	  node(CX,cy,500,40,'⑨ 更新文件大小 (如追加写)','$FILE_NAME 属性中的分配大小(AllocSize) + 实际大小(RealSize)',C.fs,{fill:'rgba(63,185,80,0.04)',small:true});
+	  cy+=35; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 11: Write data
+	  node(CX,cy,500,52,'⑩ 构造磁盘写 IRP · 写入数据到数据区簇','新 IRP: IRP_MJ_WRITE (磁盘级) · 目标 LBA 列表\nCMD: 将用户缓冲(或缓存页)数据写入分配的簇\n非覆盖写: 直接写新簇 | 覆盖写: 写已有簇','若为缓存IO: 数据先从系统缓存刷出',C.vol,{fill:'rgba(210,153,29,0.06)',small:true});
+	  cy+=41; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 12: $LogFile commit
+	  node(CX,cy,500,48,'⑪ $LogFile 写事务提交 (Commit Transaction)','记录 Commit Record: 标识事务成功完成\n脏的 $LogFile 页由 Lazy Writer 异步刷盘\n此时所有元数据更新已持久化','Commit Record 写入 = 事务完成的确定标志',C.green,{fill:'rgba(63,185,80,0.06)',small:true});
+	  cy+=39; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 13: MFT record flush
+	  node(CX,cy,500,48,'⑫ MFT 记录刷写到磁盘 (脏页回写)','修改过的 MFT 记录(含新 Run List)标记为脏\n由 Lazy Writer 或主动 Flush 触发 MFT 页写回\nMFT 记录写回 = 文件系统元数据持久化完成','NTFS 也支持 $MFTMirr 镜像前4条MFT记录',C.fs,{fill:'rgba(63,185,80,0.04)',small:true});
+	  cy+=39; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 14: Completion
+	  node(CX,cy,520,56,'⑬ IRP 完成 · 释放 FCB 锁 · 返回状态','缓存IO: 数据复制到缓存后已返回 → 以上为延迟写入过程\n直接IO: 同步等待 → 磁盘写完成后返回 → 用户态\n异步IO: PENDING 已返回 → 完成时 SetEvent/APC/IOCP','FCB 解锁 → 其他等待线程可继续操作同一文件',C.accent,{fill:'rgba(88,166,255,0.06)',small:true});
+
+	  // Right side: key data structures involved
+	  lbl(940,60,'← 涉及的元数据结构','#8b949e',9);
+	  const structs=[
+	    [930,80,'$Bitmap → 空闲簇查找'],
+	    [930,100,'$LogFile → 事务保证'],
+	    [930,120,'MFT 记录 → Run List 更新'],
+	    [930,140,'$DATA 属性 → 簇映射'],
+	    [930,160,'$STANDARD_INFO → 时间戳'],
+	    [930,180,'$FILE_NAME → 文件大小'],
+	  ];
+	  structs.forEach(([sx,sy,st])=>{
+	    const t=el('text',{x:sx,y:sy,fill:C.dim,'font-size':9,'text-anchor':'start'});t.textContent=st;g.append(t);
+	  });
+
+	  svg.append(g); return svg;
+	}
+
+	function drawNTFSReadSVG() {
+	  const W=1200, H=1100;
+	  const svg=makeSvg(W,H);
+	  const g=el('g',{fontFamily:'"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif'});
+	  const defs=el('defs');
+	  defs.innerHTML='<marker id="nr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#484f58"/></marker>';
+	  g.append(defs);
+
+	  const node=(x,y,w,h,text,sub,color,opts={})=>{
+	    const fill=opts.fill||'rgba(255,255,255,0.02)';
+	    const r=el('rect',{x:x-w/2,y:y-h/2,width:w,height:h,rx:8,fill,stroke:color,'stroke-width':1.5});
+	    if(opts.dashed) r.setAttribute('stroke-dasharray','5 4');
+	    g.append(r);
+	    const lines=text.split('\n');
+	    lines.forEach((ln,i)=>{
+	      const t=el('text',{x,y:y+(lines.length===1?5:0)+(i-(lines.length-1)/2)*(opts.small?12:14),fill:opts.dim?C.dim:C.text,'font-size':opts.small?10:11,'text-anchor':'middle'});
+	      if(i===0&&!opts.small&&!opts.dim) t.setAttribute('font-weight','600');
+	      t.textContent=ln; g.append(t);
+	    });
+	    if(sub){const s=el('text',{x:x-w/2+8,y:y-h/2+14,fill:color,'font-size':9,'text-anchor':'start'});s.textContent=sub;g.append(s);}
+	  };
+
+	  const arr=(x1,y1,x2,y2,color)=>{
+	    g.append(el('line',{x1,y1,x2,y2,stroke:color||'#484f58','stroke-width':1.8,markerEnd:'url(#nr)'}));
+	  };
+	  const darr=(x1,y1,x2,y2,color)=>{
+	    g.append(el('line',{x1,y1,x2,y2,stroke:color||'#484f58','stroke-width':1.5,'stroke-dasharray':'6 4',markerEnd:'url(#nr)'}));
+	  };
+	  const lbl=(x,y,text,color,size)=>{const t=el('text',{x,y,fill:color||C.dim,'font-size':size||10,'text-anchor':'middle'});t.textContent=text;g.append(t);};
+
+	  const CX=600;
+	  let cy=25;
+
+	  // Step 1
+	  node(CX,cy,500,44,'IRP_MJ_READ 到达 NTFS 文件系统驱动 (NTFS.sys)','IRP 携带: FILE_OBJECT · 读取偏移 · 长度 · MDL(用户缓冲)',C.accent,{fill:'rgba(88,166,255,0.06)',small:true});
+	  cy+=37; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 2: FCB
+	  node(CX,cy,500,40,'① 获取 FCB (File Control Block)','IRP → FILE_OBJECT.FsContext → FCB',C.fs,{fill:'rgba(63,185,80,0.06)',small:true});
+	  cy+=35; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 3: Shared lock
+	  node(CX,cy,500,36,'② 获取 FCB 共享锁 (可并发读)','SharedLock(FCB.MainResource) — 多个读者可同时持有',C.fs,{fill:'rgba(63,185,80,0.04)',small:true});
+	  cy+=33; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 4: Read MFT record
+	  node(CX,cy,500,48,'③ 从 MFT 读取文件记录 · 定位 $DATA 属性','根据 FCB 中缓存的 MFT 记录号定位 MFT 条目\n读取 MFT 记录 → 解析属性列表 → 找到 $DATA 属性\n检查 $DATA 为常驻还是非常驻','已在内存中的 MFT 页跳过磁盘读取',C.fs,{fill:'rgba(63,185,80,0.06)',small:true});
+	  cy+=39; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Branch: resident vs non-resident
+	  node(CX,cy,200,30,'$DATA 属性类型?','',C.edge,{diamond:true,small:true});
+	  cy+=25;
+
+	  // Resident path (left)
+	  node(CX-200,cy,250,44,'常驻: 数据在 MFT 记录内','直接复制 MFT 内的数据到用户缓冲\n(小文件,一次MFT读取即可完成)','属于缓存IO路径的快速通道',C.cache,{fill:'rgba(57,197,207,0.08)',small:true});
+
+	  // Non-resident path (right → main)
+	  node(CX+200,cy,280,46,'非常驻: 解析 Run List','从 $DATA 属性中读取簇流列表\n可变长度编码解码 → VCN→LCN 映射对',C.vol,{fill:'rgba(210,153,29,0.08)',small:true});
+
+	  // Merge
+	  cy+=38;
+	  arr(CX-200,cy-15,CX-120,cy); arr(CX+200,cy-15,CX+120,cy);
+
+	  // Step 5: Convert offset to VCN
+	  node(CX,cy,500,44,'④ 文件偏移 → VCN · 在 Run List 中定位目标 Run','偏移 / 簇大小 = VCN (商) · 簇内偏移 = 余数\n遍历 Run List: 累加每个 Run 的簇数直到覆盖目标 VCN\n映射: 目标 VCN → 对应 Run 中的 LCN','Run List 缓存在 SCB 中,热路径无磁盘访问',C.vol,{fill:'rgba(210,153,29,0.06)',small:true});
+	  cy+=37; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 6: $Bitmap verification
+	  node(CX,cy,500,40,'⑤ 验证 $Bitmap: 确认目标簇已分配','防御性检查: 确保要读取的簇在 $Bitmap 中标记为1\n异常情况会触发文件系统错误处理','正常情况快速通过,极少触发异常',C.green,{fill:'rgba(63,185,80,0.04)',small:true});
+	  cy+=35; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 7: Calculate LBA
+	  node(CX,cy,500,44,'⑥ LCN → LBA 计算 · 构造磁盘读 IRP','LBA = LCN × 每簇扇区数 × 512(或4K) + 分区起始偏移\n跨 Run 读: 构造多个 LBA 范围 (Scatter/Gather)\n新 IRP: IRP_MJ_READ (磁盘级) · 目标 LBA 列表',C.vol,{fill:'rgba(210,153,29,0.06)',small:true});
+	  cy+=37; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 8: Disk read
+	  node(CX,cy,500,45,'⑦ 下发磁盘读 IRP → 等待数据返回','IRP 经过滤驱动 → 卷管理器 → 磁盘驱动 → 物理磁盘\nHDD: 磁头寻道 + 盘片旋转 + 扇区读取\nSSD: 页读取 (微秒级) | NVMe: 命令队列 + DMA','读取单位可能大于请求大小(预读优化)',C.hw,{fill:'rgba(248,81,73,0.08)',small:true});
+	  cy+=37; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 9: Data to user buffer
+	  node(CX,cy,500,52,'⑧ 数据到达 · 复制到用户缓冲区','缓存IO (CcCopyRead): 磁盘数据先进入系统缓存 → memcpy 到用户缓冲\n直接IO: DMA 直接将磁盘数据传输到用户缓冲 (无中间副本)\n异步IO: 完成时从 IRP 关联的 MDL 复制到用户缓冲','缓存IO 同时触发缓存预读 (Read-Ahead): 顺序访问检测',C.cache,{fill:'rgba(57,197,207,0.06)',small:true});
+	  cy+=41; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 10: Update access time
+	  node(CX,cy,500,38,'⑨ 更新 $STANDARD_INFORMATION (访问时间)','LastAccessTime 更新 (NtfsDisableLastAccessUpdate 可关闭)',C.fs,{fill:'rgba(63,185,80,0.04)',small:true});
+	  cy+=34; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 11: Read-ahead
+	  node(CX,cy,500,54,'⑩ 触发预读 (Read-Ahead) — 仅缓存 IO','检测顺序读模式: 连续两次顺序访问 → 触发异步预取\n提前将后续簇读入系统缓存 · 增大下次命中率\n预读深度: 通常 2-8 个页面 (8KB-32KB) 或更大','仅缓存IO路径触发 · 直接IO/异步IO无预读',C.cache,{fill:'rgba(57,197,207,0.06)',small:true,dashed:true});
+	  cy+=42; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 12: Completion
+	  node(CX,cy,500,48,'⑪ 释放 FCB 共享锁 · IRP 完成 · 返回数据','FCB.Unlock() → 其他读者/写者可继续\n缓存IO: 数据已返回 · 预读在后台继续\n直接IO: 同步返回 · 读取字节数\n异步IO: SetEvent/APC/IOCP · 用户获取 OVERLAPPED 结果','NTFS 读取路径不写 $LogFile (读不改变元数据)',C.accent,{fill:'rgba(88,166,255,0.06)',small:true});
+
+	  // Right side notes
+	  lbl(940,60,'← 读取关键点','#8b949e',9);
+	  const nota=[930,80,'常驻: 零磁盘IO读','#3fb950'];
+	  const nota1=el('text',{x:nota[0],y:nota[1],fill:nota[2],'font-size':9,'text-anchor':'start'});nota1.textContent=nota[3];g.append(nota1);
+	  const nota2=el('text',{x:930,y:100,fill:'#d2991d','font-size':9,'text-anchor':'start'});nota2.textContent='非常驻: Run List→LCN→LBA';g.append(nota2);
+	  const nota3=el('text',{x:930,y:120,fill:'#39c5cf','font-size':9,'text-anchor':'start'});nota3.textContent='缓存命中: 零磁盘IO';g.append(nota3);
+	  const nota4=el('text',{x:930,y:140,fill:'#f0883e','font-size':9,'text-anchor':'start'});nota4.textContent='预读: 顺序访问优化';g.append(nota4);
+	  const nota5=el('text',{x:930,y:160,fill:C.dim,'font-size':9,'text-anchor':'start'});nota5.textContent='读路径不写 $LogFile';g.append(nota5);
+	  const nota6=el('text',{x:930,y:180,fill:C.dim,'font-size':9,'text-anchor':'start'});nota6.textContent='多读者共享锁并发';g.append(nota6);
+
+	  svg.append(g); return svg;
+	}
+
+	// ─── DISK INITIALIZATION SVGs ───
+	let currentDI='lba';
+
+	function showDiskInit(mode) {
+	  currentDI=mode;
+	  document.querySelectorAll('.di-sub').forEach(b=>b.classList.remove('active'));
+	  const btnId = mode==='part'?'btnDIPart':mode==='format'?'btnDIFormat':mode==='all'?'btnDIAll':'btnDILBA';
+	  document.getElementById(btnId).classList.add('active');
+	  const canvas=document.getElementById('diCanvas');
+	  canvas.innerHTML='';
+	  if(mode==='part') canvas.appendChild(drawDiskInitPartSVG());
+	  else if(mode==='format') canvas.appendChild(drawDiskInitFormatSVG());
+	  else if(mode==='all') canvas.appendChild(drawDiskInitAllSVG());
+	  else canvas.appendChild(drawDiskInitLBA());
+	}
+
+	function drawDiskInitLBA() {
+	  const W=1200, H=1050;
+	  const svg=makeSvg(W,H);
+	  const g=el('g',{fontFamily:'"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif'});
+	  const defs=el('defs');
+	  defs.innerHTML='<marker id="nl" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#484f58"/></marker><marker id="nlG" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#3fb950"/></marker>';
+	  g.append(defs);
+
+	  const R=(x,y,w,h,rx=6,fill='rgba(255,255,255,0.02)',stroke=C.edge,dash)=>{
+	    const r=el('rect',{x,y,width:w,height:h,rx,fill,stroke,'stroke-width':1.5});
+	    if(dash) r.setAttribute('stroke-dasharray','5 4');
+	    r.setAttribute('style','animation:lba-reveal 0.45s ease-out both');
+	    g.append(r); return r;
+	  };
+	  const T=(x,y,text,size=11,fill=C.text,anchor='start',bold=false,delay=0)=>{
+	    const t=el('text',{x,y,fill,'font-size':size,'text-anchor':anchor});
+	    if(bold) t.setAttribute('font-weight','600');
+	    if(delay) t.setAttribute('style',`animation:lba-reveal 0.45s ease-out ${delay}s both`);
+	    else t.setAttribute('style','animation:lba-reveal 0.45s ease-out both');
+	    t.textContent=text; g.append(t); return t;
+	  };
+	  const A=(x1,y1,x2,y2,color=C.edge)=>{
+	    g.append(el('line',{x1,y1,x2,y2,stroke:color,'stroke-width':1.5,markerEnd:'url(#nl)'}));
+	  };
+
+	  // ═══════════ TITLE ═══════════
+	  T(600,22,'GPT 磁盘 LBA 布局 — 各逻辑块地址 (LBA) 承载的完整数据结构','#58a6ff',14,'middle',true);
+
+	  // ═══════════ MAIN DISK BAR ═══════════
+	  const barX=40, barY=50, barH=52, barW=1120;
+	  R(barX,barY,barW,barH,8,'rgba(255,255,255,0.01)',C.edge);
+
+	  const segs=[
+	    {x:barX, w:78, label:'LBA 0', sub:'保护性 MBR', c:C.vol},
+	    {x:barX+78, w:58, label:'LBA 1', sub:'GPT 头', c:C.green},
+	    {x:barX+136, w:174, label:'LBA 2 ~ 33', sub:'分区条目 ×128', c:C.fs},
+	    {x:barX+310, w:530, label:'LBA 34 ~ LBA_last−34    （数据区 — 用户分区 · 可创建多个卷）', sub:'', c:C.accent},
+	    {x:barX+840, w:174, label:'LBA_last−33 ~ last−1', sub:'备份分区条目', c:C.green},
+	    {x:barX+1014, w:106, label:'LBA_last', sub:'备份 GPT 头', c:C.green},
+	  ];
+	  segs.forEach((s,i)=>{
+	    const r=R(s.x,barY,s.w,barH,0,`rgba(255,255,255,0.03)`,s.c);
+	    r.setAttribute('style',`animation:lba-reveal 0.5s ease-out ${i*0.12}s both`);
+	    T(s.x+s.w/2,barY+20,s.label,11,s.c,'middle',true,i*0.12+0.05);
+	    if(s.sub) T(s.x+s.w/2,barY+38,s.sub,9,C.dim,'middle',false,i*0.12+0.05);
+	  });
+	  // Bar bottom label
+	  T(600,barY+barH+14,'← 磁盘起始 (LBA 0)                                                                                          磁盘末尾 (LBA_last) →','#8b949e',10,'middle',false,0.7);
+
+	  // ═══════════ ROW 1: LBA 0 detail + LBA 1 detail ═══════════
+	  const row1Y=130;
+	  // --- LBA 0 box (left) ---
+	  R(40,row1Y,540,170,8,'rgba(210,153,29,0.03)',C.vol);
+	  T(55,row1Y+20,'LBA 0 — 保护性 MBR (512 字节)','#d2991d',13,'start',true);
+
+	  // MBR internal structure as 3 horizontal bars
+	  const mbrX=60, mbrY=row1Y+32;
+	  [{x:mbrX,w:420,l:'引导代码区 446B',sub:'内容: 单条 0xEE 类型的分区条目填充，使旧 MBR 工具将整盘识别为"已占用"',c:C.vol},
+	   {x:mbrX,w:70,l:'分区表 64B',sub:'1 条记录: 类型=0xEE，起始 LBA=1，覆盖整个磁盘',c:'#d2991d'},
+	   {x:mbrX+490,w:30,l:'55 AA',sub:'',c:C.hw}].forEach((b,i)=>{
+	     const br=R(b.x,mbrY+i*32,b.w,28,4,`rgba(210,153,29,0.06)`,b.c);
+	     T(b.x+b.w/2,mbrY+i*32+18,b.l,9,C.text,'middle',true);
+	     if(b.sub) T(b.x+b.w+8,mbrY+i*32+18,b.sub,8,C.dim,'start');
+	  });
+	  T(55,row1Y+140,'保护性 MBR 的关键作用: 防止旧工具（如 fdisk）误判磁盘为"空盘"而覆盖 GPT 数据','#8b949e',9,'start',false);
+	  T(55,row1Y+157,'BIOS 启动时 MBR 引导代码不会被 UEFI 执行，UEFI 直接从 GPT 头读取分区信息','#8b949e',9,'start',false);
+
+	  // --- LBA 1 box (right) ---
+	  R(600,row1Y,560,170,8,'rgba(63,185,80,0.03)',C.green);
+	  T(615,row1Y+20,'LBA 1 — GPT 头 (通常 92 字节 + 保留)','#3fb950',13,'start',true);
+	  const ghFields=[
+	    ['签名', '"EFI PART" (8B)', '标识这是一个有效的 GPT 磁盘'],
+	    ['版本', 'GPT 规范版本 (如 1.0)', ''],
+	    ['头 CRC32', 'GPT 头自身校验', '损坏 → 从备份恢复'],
+	    ['磁盘 GUID', '16 字节全局唯一标识', '唯一标识此物理磁盘'],
+	    ['分区表 LBA', '= 2 (分区条目起始位置)', '默认紧接 GPT 头之后'],
+	    ['条目数', '默认 128 条', 'Windows 限制 128 个分区'],
+	    ['条目大小', '128 字节/条', '总计 128 × 128B = 16KB'],
+	    ['分区表 CRC32', '所有分区条目的校验和', '检测条目数据损坏'],
+	  ];
+	  ghFields.forEach((f,i)=>{
+	    T(615,row1Y+34+i*15,f[0]+':',9,C.green,'start',true);
+	    T(695,row1Y+34+i*15,f[1],9,C.text,'start',false);
+	    if(f[2]) T(830,row1Y+34+i*15,f[2],8,C.dim,'start',false);
+	  });
+
+	  // ═══════════ ROW 2: Partition entries + Volume layout ═══════════
+	  const row2Y=320;
+	  // --- LBA 2-33 (left) ---
+	  R(40,row2Y,540,195,8,'rgba(63,185,80,0.03)',C.fs);
+	  T(55,row2Y+20,'LBA 2 ~ 33 — 分区条目数组 (128 条 × 128B = 16KB)','#3fb950',13,'start',true);
+	  T(55,row2Y+38,'每条 128 字节的结构:','#8b949e',10,'start',false);
+	  const peFields=[
+	    ['偏移 0-15', '分区类型 GUID', '标识分区用途 (如 EBD0A0A2-... = 基本数据分区)'],
+	    ['偏移 16-31', '分区唯一 GUID', '全局唯一标识此分区'],
+	    ['偏移 32-39', '起始 LBA (64位)', '分区第一个扇区的 LBA 地址'],
+	    ['偏移 40-47', '结束 LBA (64位)', '分区最后一个扇区 (含)'],
+	    ['偏移 48-55', '属性标志 (64位)', 'Bit0=系统分区 · Bit1=隐藏 · Bit2=只读 · Bit60=只读'],
+	    ['偏移 56-127', '分区名称', '36 字符 UTF-16LE Unicode (如"Basic data partition")'],
+	  ];
+	  peFields.forEach((f,i)=>{
+	    T(55,row2Y+54+i*17,f[0],9,C.green,'start',true);
+	    T(170,row2Y+54+i*17,f[1],9,C.text,'start',false);
+	    T(334,row2Y+54+i*17,f[2],8,C.dim,'start',false);
+	  });
+	  T(55,row2Y+160,'GPT 分区条目中不存在「活动分区」标志，UEFI 通过分区类型 GUID 识别 ESP','#8b949e',9,'start',false);
+	  T(55,row2Y+175,'（EFI System Partition, GUID: C12A7328-...）从 ESP 加载 .efi 启动文件','#8b949e',9,'start',false);
+
+	  // --- Volume internal format (right) ---
+	  R(600,row2Y,560,195,8,'rgba(88,166,255,0.03)',C.accent);
+	  T(615,row2Y+20,'数据区内部 — NTFS 卷格式化后的布局','#58a6ff',13,'start',true);
+	  // Mini volume bar
+	  const volX=615, volY=row2Y+34, volW=530;
+	  R(volX,volY,volW,38,4,'rgba(255,255,255,0.01)',C.edge);
+	  [{x:volX,w:36,l:'VBR',c:C.hw},{x:volX+36,w:20,l:'保留',c:C.vol},
+	   {x:volX+56,w:90,l:'MFT Zone\n(预留 12.5%)',c:C.fs},{x:volX+146,w:60,l:'数据区',c:C.accent},
+	   {x:volX+206,w:80,l:'$MFT\n(数据区内)',c:C.fs},{x:volX+286,w:55,l:'$LogFile',c:C.green},
+	   {x:volX+341,w:50,l:'$Bitmap',c:C.green},{x:volX+391,w:154,l:'用户文件 · 目录 · 扩展元数据 · 剩余 MFT 记录',c:C.accent}].forEach(seg=>{
+	     const vr=R(seg.x,volY,seg.w,38,0,`rgba(255,255,255,0.01)`,seg.c);
+	     const lines=seg.l.split('\n');
+	     lines.forEach((ln,li)=>{T(seg.x+seg.w/2,volY+14+li*12,ln,8,seg.c,'middle',li===0);});
+	  });
+	  // Description lines
+	  const volDesc=[
+	    ['VBR (卷引导记录)', '包含 BPB: 扇区/簇大小、MFT 起始 LCN、卷序列号等'],
+	    ['$MFT (主文件表)', '每条记录 1KB，前 16 条为 NTFS 元数据文件'],
+	    ['$LogFile', '事务日志 (WAL)，保障 NTFS 元数据一致性 (预分配 ~64MB)'],
+	    ['$Bitmap', '簇分配位图，每 bit 代表一个簇的分配状态 (已用=1 / 空闲=0)'],
+	  ];
+	  volDesc.forEach((d,i)=>{
+	    T(615,volY+55+i*18,d[0],10,C.accent,'start',true);
+	    T(780,volY+55+i*18,d[1],9,C.dim,'start',false);
+	  });
+
+	  // ═══════════ ROW 3: Backup + MBR comparison ═══════════
+	  const row3Y=540;
+	  // --- Backup explanation ---
+	  R(40,row3Y,540,135,8,'rgba(63,185,80,0.03)',C.green);
+	  T(55,row3Y+20,'磁盘末尾 — GPT 备份 (LBA_last-33 ~ LBA_last)','#3fb950',13,'start',true);
+	  T(55,row3Y+42,'备份分区条目 (LBA_last-33 ~ last-1):','#8b949e',10,'start',true);
+	  T(70,row3Y+58,'完整的 128 条分区条目镜像，与 LBA 2-33 内容完全相同','#c9d1d9',10,'start',false);
+	  T(55,row3Y+78,'备份 GPT 头 (LBA_last):','#8b949e',10,'start',true);
+	  T(70,row3Y+94,'GPT 头的镜像副本，但「当前 LBA」和「备份 LBA」字段互换','#c9d1d9',10,'start',false);
+	  T(55,row3Y+114,'主 GPT 损坏时: 系统自动从备份恢复 → 无需用户干预','#d2991d',10,'start',false);
+
+	  // --- MBR full disk layout (compact) ---
+	  R(600,row3Y,560,135,8,'rgba(210,153,29,0.03)',C.vol);
+	  T(615,row3Y+20,'MBR 磁盘布局对比 (传统 BIOS)','#d2991d',13,'start',true);
+	  const mbrBarY=row3Y+32;
+	  R(615,mbrBarY,530,36,4,'rgba(255,255,255,0.01)',C.edge);
+	  [{x:615,w:130,l:'LBA 0: MBR\n446B引导+64B分区表+55AA',c:C.vol},
+	   {x:745,w:400,l:'LBA 1 ~ N:  分区数据区（最多 4 个主分区 / 扩展分区链）',c:C.accent}].forEach(s=>{
+	     const mr=R(s.x,mbrBarY,s.w,36,0,`rgba(255,255,255,0.01)`,s.c);
+	     const lines=s.l.split('\n');
+	     lines.forEach((ln,li)=>{T(s.x+s.w/2,mbrBarY+14+li*12,ln,8,s.c,'middle',li===0);});
+	  });
+	  T(615,mbrBarY+50,'分区表 (64B = 4×16B): 偏移0=引导标志 · 偏移4=类型(0x07=NTFS) · 偏移8=起始LBA(32位) · 偏移12=扇区数(32位)','#8b949e',9,'start',false);
+	  T(615,mbrBarY+65,'MBR 限制: 最大 2TB (32位LBA×512B) · 4个主分区 · 无 CRC 校验 · 无备份 → 损坏即丢失','#f85149',9,'start',false);
+
+	  // ═══════════ CALLBACK LINES from disk bar ═══════════
+	  // Draw connector lines from disk bar segments to their detail boxes
+	  const connStyle='animation:lba-connector-draw 0.6s ease-out 0.8s forwards';
+	  [{bx:79,by:barY+barH, tx:310,ty:row1Y-2,c:C.vol},   // LBA0 → LBA0 box
+	   {bx:107,by:barY+barH, tx:880,ty:row1Y-2,c:C.green},  // LBA1 → GPT header box
+	   {bx:223,by:barY+barH, tx:310,ty:row2Y-2,c:C.fs},     // LBA2-33 → entries box
+	   {bx:575,by:barY+barH, tx:880,ty:row2Y-2,c:C.accent}, // data area → volume layout
+	   {bx:927,by:barY+barH, tx:310,ty:row3Y-2,c:C.green},  // backup → backup box
+	   {bx:1067,by:barY+barH, tx:880,ty:row3Y-2,c:C.vol},   // LBA_last → MBR comparison
+	  ].forEach(cl=>{
+	    const line=el('line',{x1:cl.bx,y1:cl.by,x2:cl.tx,y2:cl.ty,stroke:cl.c,'stroke-width':1.2,'stroke-dasharray':'4 4',markerEnd:'url(#nlG)'});
+	    line.setAttribute('style',connStyle);
+	    g.append(line);
+	  });
+
+	  svg.append(g); return svg;
+	}
+
+	function drawDiskInitAllSVG() {
+	  const W=1200, H=1400;
+	  const svg=makeSvg(W,H);
+	  const g=el('g',{fontFamily:'"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif'});
+	  const defs=el('defs');
+	  defs.innerHTML='<marker id="nd" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#484f58"/></marker>';
+	  g.append(defs);
+
+	  const node=(x,y,w,h,text,sub,color,opts={})=>{
+	    const fill=opts.fill||'rgba(255,255,255,0.02)';
+	    const r=el('rect',{x:x-w/2,y:y-h/2,width:w,height:h,rx:8,fill,stroke:color,'stroke-width':1.5});
+	    if(opts.dashed) r.setAttribute('stroke-dasharray','5 4');
+	    g.append(r);
+	    const lines=text.split('\n');
+	    lines.forEach((ln,i)=>{
+	      const t=el('text',{x,y:y+(lines.length===1?5:0)+(i-(lines.length-1)/2)*(opts.small?12:14),fill:opts.dim?C.dim:C.text,'font-size':opts.small?10:11,'text-anchor':'middle'});
+	      if(i===0&&!opts.small&&!opts.dim) t.setAttribute('font-weight','600');
+	      t.textContent=ln; g.append(t);
+	    });
+	    if(sub){const s=el('text',{x:x-w/2+8,y:y-h/2+14,fill:color,'font-size':9,'text-anchor':'start'});s.textContent=sub;g.append(s);}
+	  };
+
+	  const arr=(x1,y1,x2,y2,color)=>{
+	    g.append(el('line',{x1,y1,x2,y2,stroke:color||'#484f58','stroke-width':1.8,markerEnd:'url(#nd)'}));
+	  };
+	  const darr=(x1,y1,x2,y2,color)=>{
+	    g.append(el('line',{x1,y1,x2,y2,stroke:color||'#484f58','stroke-width':1.5,'stroke-dasharray':'6 4',markerEnd:'url(#nd)'}));
+	  };
+	  const lbl=(x,y,text,color,size)=>{const t=el('text',{x,y,fill:color||C.dim,'font-size':size||10,'text-anchor':'middle'});t.textContent=text;g.append(t);};
+	  const secHdr=(x,y,text)=>{const t=el('text',{x,y,fill:'#58a6ff','font-size':13,'font-weight':'600','text-anchor':'middle'});t.textContent=text;g.append(t);};
+
+	  const CX=600; let cy=18;
+
+	  // ═══ PHASE 1: 物理连接 & PnP 枚举 ═══
+	  secHdr(CX,cy,'▌阶段一: 物理连接 & PnP 检测'); cy+=18;
+	  node(CX,cy,600,56,'磁盘物理连接 (SATA / SAS / NVMe / USB)','HBA 控制器检测到新设备 · 端口寄存器状态变化 · 热插拔事件或冷启动扫描',C.hw,{fill:'rgba(248,81,73,0.06)',small:true});
+	  cy+=43; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  node(CX,cy,600,56,'storport.sys + 厂商 miniport 驱动响应','miniport 创建 FDO (Functional Device Object) · 上报设备信息\n磁盘容量 · 扇区大小 (512B/4Kn) · 序列号 · 型号 · 固件版本',C.hw,{fill:'rgba(248,81,73,0.08)',small:true});
+	  cy+=43; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  node(CX,cy,600,52,'disk.sys 类驱动创建磁盘 PDO · PnP 管理器枚举','disk.sys 为磁盘创建 PDO (Physical Device Object)\nWindows PnP 管理器分配设备路径: \\Device\\HarddiskX\\DRX\n注册设备接口 GUID_DEVINTERFACE_DISK','可在设备管理器中看到新磁盘(脱机)',C.hw,{fill:'rgba(248,81,73,0.06)',small:true});
+	  cy+=41; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // ═══ PHASE 2: 磁盘初始化 (分区样式) ═══
+	  secHdr(CX,cy,'▌阶段二: 磁盘初始化 — 选择分区样式 (MBR / GPT)'); cy+=18;
+	  node(CX,cy,600,56,'磁盘管理 / diskpart → 右键"初始化磁盘"','用户选择分区样式: MBR (传统) 或 GPT (现代,推荐)\n或者在磁盘管理器自动弹出"初始化磁盘"对话框\n此操作在磁盘的第一个扇区写入分区表结构','虚拟磁盘服务 (VDS) → 分区管理器 (PartMgr.sys)',C.accent,{fill:'rgba(88,166,255,0.06)',small:true});
+	  cy+=43; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Write partition table
+	  node(CX-200,cy,330,60,'MBR 初始化','写入 LBA 0: 主引导记录\n→ 446B 引导代码 (BIOS)\n→ 64B 分区表 (4个主分区)\n→ 2B 签名 (0x55AA)\n最大 2TB · 4个主分区',C.vol,{fill:'rgba(210,153,29,0.06)',small:true});
+	  node(CX+200,cy,330,60,'GPT 初始化','写入 LBA 0: 保护性 MBR\n写入 LBA 1: GPT 头\n写入 LBA 2-33: 分区表\n(每个条目 128B, 共128个)\n最大 8ZB · 128 个分区',C.green,{fill:'rgba(63,185,80,0.06)',small:true});
+	  arr(CX,cy-30,CX-35,cy-15,C.dim);
+	  arr(CX,cy-30,CX+35,cy-15,C.dim);
+	  lbl(CX,cy-20,'选择?','#484f58');
+	  cy+=45;
+	  // Merge arrows
+	  arr(CX-200,cy-15,CX,cy+5,C.dim); arr(CX+200,cy-15,CX,cy+5,C.dim);
+
+	  // ═══ PHASE 3: 分区创建 ═══
+	  cy+=8;
+	  secHdr(CX,cy,'▌阶段三: 分区创建'); cy+=18;
+	  node(CX,cy,600,56,'新建简单卷 / 指定分区大小 & 驱动器号','用户选择: 分区大小 (MB/GB) · 驱动器号 (C:/D:/...) 或 NTFS 挂载点\nPartMgr.sys 在分区表中写入分区条目\nMBR: 分区类型(0x07=NTFS) + 起始LBA + 扇区数\nGPT: 分区类型GUID + 分区名 + 起始/结束LBA','分区创建后磁盘状态: 联机→基本→未格式化(RAW)',C.accent,{fill:'rgba(88,166,255,0.06)',small:true});
+	  cy+=43; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // ═══ PHASE 4: NTFS 格式化 ═══
+	  secHdr(CX,cy,'▌阶段四: NTFS 格式化 (Format / 高级格式化)'); cy+=18;
+
+	  // Step 4a: Write VBR
+	  node(CX,cy,600,52,'① 写入 VBR (卷引导记录) 到分区第一个扇区','VBR 包含: BIOS Parameter Block (BPB)\n字节/扇区 · 扇区/簇 · 保留扇区 · 总扇区数\nMFT 起始 LCN · MFTMirr 起始 LCN · 每MFT记录簇数\n每索引簇数 · 卷序列号 · 卷标','BPB 参数决定后续所有 NTFS 元数据的布局',C.green,{fill:'rgba(63,185,80,0.06)',small:true});
+	  cy+=41; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 4b: Create MFT
+	  node(CX,cy,600,62,'② 创建 MFT (主文件表) — 初始化前16条元数据记录','$MFT(0): MFT 自身 · $MFTMirr(1): MFT 前4条记录的镜像\n$LogFile(2): 事务日志(空,待使用) · $Volume(3): 卷名/版本\n$AttrDef(4): 属性定义表(固定) · .(5): 根目录(空)\n$Bitmap(6): 簇分配位图 · $Boot(7): 引导扇区镜像\n$BadClus(8): 坏簇列表(空) · $Secure(9): 安全描述符','每条记录 1KB · 前16条预定义 · 后续为普通文件',C.fs,{fill:'rgba(63,185,80,0.08)',small:true});
+	  cy+=46; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 4c: Init $Bitmap
+	  node(CX,cy,600,52,'③ 初始化 $Bitmap — 标记元数据簇为"已分配"','计算 MFT Zone 占用的簇数 (默认预留卷 12.5% 空间)\n标记 VBR 扇区所在簇 · MFT 自身簇 · $MFTMirr 簇\n标记 $LogFile 初始簇 · 根目录索引的簇\n其余所有簇标记为 0 (空闲)','$Bitmap 是一个普通文件,本身也会占用簇并在自身中标记',C.green,{fill:'rgba(63,185,80,0.06)',small:true});
+	  cy+=41; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 4d: Init $LogFile
+	  node(CX,cy,600,48,'④ 初始化 $LogFile — 分配初始日志页','$LogFile 预分配空间(默认约 64MB)\n初始化日志页链 · 设置日志序列号(LSN) = 0\n写入首个 Checkpoint 记录 · 标记所有日志页为空闲','此后每个 NTFS 元数据变更都会先写 $LogFile',C.green,{fill:'rgba(63,185,80,0.06)',small:true});
+	  cy+=39; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 4e: Init root dir & $UpCase
+	  node(CX,cy,600,48,'⑤ 初始化根目录 · $UpCase 表 · $Secure 数据库','根目录(.): 空的 $INDEX_ROOT B+树,等待接收文件/子目录\n$UpCase: 写入 Unicode 大写转换表(128KB,固定内容)\n$Secure: 创建空的安全描述符数据库(后续存储 ACL)','\\$Extend 目录: $ObjId / $Quota / $Reparse 等扩展元文件',C.fs,{fill:'rgba(63,185,80,0.06)',small:true});
+	  cy+=39; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 4f: Write $Volume info
+	  node(CX,cy,600,40,'⑥ 写入 $Volume 信息 · 设置卷脏标志 (Dirty Bit)','卷标(用户指定或默认"新加卷") · NTFS 版本号\n卷序列号(随机生成) · 设置 Dirty Bit = 1\n(首次挂载后 Chkdsk 或正常卸载时清除)',C.fs,{fill:'rgba(63,185,80,0.04)',small:true});
+	  cy+=35; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // ═══ PHASE 5: 卷挂载 ═══
+	  secHdr(CX,cy,'▌阶段五: 卷挂载 & 就绪'); cy+=18;
+
+	  node(CX,cy,600,60,'文件系统识别 & 挂载卷','NTFS.sys 读取 VBR → 验证 BPB 签名("NTFS"字符串)\n加载 $MFT 前几条记录到内存 · 建立 FCB 树\n读取 $Volume → 检查 Dirty Bit · 需要时触发 Chkdsk\n读取 $Bitmap → 建立空闲簇内存缓存\n在 \\GLOBAL??\\ 创建符号链接: C: → \\Device\\HarddiskVolumeX','挂载完成 → 卷状态变为"健康(主分区/基本数据分区)"',C.accent,{fill:'rgba(88,166,255,0.06)',small:true});
+	  cy+=45; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Final: Ready
+	  node(CX,cy,450,48,'✓ 卷就绪 — 应用程序可进行文件读写操作','CreateFile/ReadFile/WriteFile → NTFS 文件系统 → 磁盘',C.green,{fill:'rgba(63,185,80,0.12)'});
+
+	  // Right side timeline labels
+	  lbl(940,26,'时间线','#8b949e',9);
+	  [{y:56,label:'~0s: 物理连接'},{y:99,label:'~1s: PnP 枚举'},{y:142,label:'~2s: 磁盘识别'},{y:210,label:'用户操作: 初始化'},{y:280,label:'用户操作: 分区'},{y:370,label:'~几秒-几分钟: 格式化'},{y:495,label:'格式化完成'}].forEach(e=>{
+	    const t=el('text',{x:940,y:e.y,fill:C.dim,'font-size':9,'text-anchor':'start'});t.textContent=e.label;g.append(t);
+	  });
+
+	  svg.append(g); return svg;
+	}
+
+	function drawDiskInitPartSVG() {
+	  const W=1200, H=980;
+	  const svg=makeSvg(W,H);
+	  const g=el('g',{fontFamily:'"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif'});
+	  const defs=el('defs');
+	  defs.innerHTML='<marker id="np" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#484f58"/></marker>';
+	  g.append(defs);
+
+	  const node=(x,y,w,h,text,sub,color,opts={})=>{
+	    const fill=opts.fill||'rgba(255,255,255,0.02)';
+	    const r=el('rect',{x:x-w/2,y:y-h/2,width:w,height:h,rx:6,fill,stroke:color,'stroke-width':1.5});
+	    if(opts.dashed) r.setAttribute('stroke-dasharray','5 4');
+	    g.append(r);
+	    const lines=text.split('\n');
+	    lines.forEach((ln,i)=>{
+	      const t=el('text',{x,y:y+(lines.length===1?5:0)+(i-(lines.length-1)/2)*(opts.small?12:14),fill:opts.dim?C.dim:C.text,'font-size':opts.small?10:11,'text-anchor':'middle'});
+	      if(i===0&&!opts.small&&!opts.dim) t.setAttribute('font-weight','600');
+	      t.textContent=ln; g.append(t);
+	    });
+	    if(sub){const s=el('text',{x:x-w/2+8,y:y-h/2+14,fill:color,'font-size':9,'text-anchor':'start'});s.textContent=sub;g.append(s);}
+	  };
+
+	  const arr=(x1,y1,x2,y2,color)=>{
+	    g.append(el('line',{x1,y1,x2,y2,stroke:color||'#484f58','stroke-width':1.8,markerEnd:'url(#np)'}));
+	  };
+	  const lbl=(x,y,text,color,size)=>{const t=el('text',{x,y,fill:color||C.dim,'font-size':size||10,'text-anchor':'middle'});t.textContent=text;g.append(t);};
+
+	  // ═══ MBR (Left side) ═══
+	  lbl(300,20,'▌MBR (Master Boot Record) — 传统 BIOS 分区','#d2991d',13);
+	  // MBR Overall Layout
+	  node(300,70,500,40,'LBA 0 (磁盘第一个 512B 扇区)','',C.vol,{fill:'rgba(210,153,29,0.04)'});
+
+	  // Bootstrap code
+	  node(300,120,500,52,'引导代码区 (446 字节)','BIOS 启动时加载并执行 · 查找活动分区 · 加载分区 VBR\n现代 UEFI 系统不使用此部分 (通过 ESP 分区启动)','传统 BIOS 启动链: BIOS → MBR代码 → 活动分区 VBR → BOOTMGR',C.vol,{fill:'rgba(210,153,29,0.06)',small:true});
+
+	  // Partition Table
+	  node(300,182,500,140,'分区表 (64 字节 = 4个条目 × 16字节/条)','','每个 16B 条目结构:',C.vol,{fill:'rgba(210,153,29,0.08)'});
+	  const mbrFields=[
+	    [80,188,'偏移0: 引导标志 (0x80=活动, 0x00=非活动)'],
+	    [80,204,'偏移1-3: CHS 起始地址 (已废弃,SSD/LBA下无用)'],
+	    [80,220,'偏移4: 分区类型 (0x07=NTFS, 0x0B=FAT32, 0xEE=GPT保护)'],
+	    [80,236,'偏移5-7: CHS 结束地址 (已废弃)'],
+	    [80,252,'偏移8-11: 起始 LBA (逻辑块地址, 32位)'],
+	    [80,268,'偏移12-15: 扇区总数 (32位, 最大 2^32×512B = 2TB)'],
+	  ];
+	  mbrFields.forEach(([mx,my,mt])=>{
+	    const t=el('text',{x:mx,y:my,fill:C.dim,'font-size':10,'text-anchor':'start'});t.textContent=mt;g.append(t);
+	  });
+	  node(300,282,500,30,'扩展分区/逻辑分区: 超过4个分区时使用链式扩展引导记录(EBR)','',C.vol,{dashed:true,small:true});
+
+	  // Signature
+	  node(300,327,500,30,'签名 (2 字节) = 0x55 0xAA','BIOS 以此签名验证 MBR 有效性',C.vol,{fill:'rgba(210,153,29,0.04)',small:true});
+
+	  // ═══ GPT (Right side) ═══
+	  lbl(900,20,'▌GPT (GUID Partition Table) — 现代 UEFI 分区','#3fb950',13);
+
+	  // Protective MBR
+	  node(900,60,500,30,'LBA 0: 保护性 MBR','单条目: 类型0xEE, 覆盖整个磁盘, 防止旧工具误判为"空磁盘"',C.green,{fill:'rgba(63,185,80,0.04)',small:true});
+	  arr(900,75,900,90);
+
+	  // GPT Header
+	  node(900,110,500,80,'LBA 1: GPT 头 (GPT Header)','签名"EFI PART"(8B) · GPT版本 · 头CRC32\n头自身大小(92B) · 当前LBA=1 · 备份头LBA(磁盘最后-1)\n第一个可用LBA(数据区起始) · 最后一个可用LBA(数据区结束)\n磁盘GUID · 分区表起始LBA=2 · 分区条目数(默认128)\n每个条目大小(128B) · 分区表CRC32','损坏时从磁盘末尾的备份 GPT 头自动恢复',C.green,{fill:'rgba(63,185,80,0.06)',small:true});
+	  arr(900,150,900,170);
+
+	  // Partition entries
+	  node(900,210,500,180,'LBA 2-33: 分区条目数组 (128条 × 128B = 16KB)','','每个 128B 条目结构:',C.green,{fill:'rgba(63,185,80,0.08)'});
+	  const gptFields=[
+	    [680,220,'偏移0-15: 分区类型 GUID (标识用途: 基本数据/ESP/MSR等)'],
+	    [680,238,'偏移16-31: 分区唯一 GUID (全局唯一标识此分区)'],
+	    [680,256,'偏移32-39: 起始 LBA (64位, 最大 8ZB)'],
+	    [680,274,'偏移40-47: 结束 LBA (64位)'],
+	    [680,292,'偏移48-55: 属性标志 (Bit0=系统分区, Bit1=隐藏, Bit2=只读...)'],
+	    [680,310,'偏移56-127: 分区名称 (36字符 UTF-16LE Unicode)'],
+	  ];
+	  gptFields.forEach(([gx,gy,gt])=>{
+	    const t=el('text',{x:gx,y:gy,fill:C.dim,'font-size':10,'text-anchor':'start'});t.textContent=gt;g.append(t);
+	  });
+	  arr(900,300,900,320);
+
+	  // Backup
+	  node(900,340,500,36,'LBA_last: 备份 GPT (分区表 + GPT头的镜像)','磁盘末尾存储完整 GPT 的副本 · 主 GPT 损坏时可从备份恢复',C.green,{fill:'rgba(63,185,80,0.04)',small:true});
+
+	  // ═══ COMPARISON TABLE ═══
+	  lbl(600,405,'▌MBR vs GPT 对比','#58a6ff',13);
+	  const cmpData=[
+	    ['', 'MBR', 'GPT'],
+	    ['磁盘容量', '≤ 2TB (32位LBA)', '≤ 8ZB (64位LBA)'],
+	    ['最大分区数', '4个主分区 (扩展/逻辑)', '128个 (Windows默认)'],
+	    ['启动方式', 'BIOS (Legacy)', 'UEFI (原生) 或 BIOS+CSM'],
+	    ['冗余备份', '无 (损坏=数据丢失)', '磁盘末尾有完整备份GPT'],
+	    ['数据校验', '无校验', 'CRC32 校验(头+分区表)'],
+	    ['分区标识', '1字节类型码 (0x07=NTFS)', '16字节 GUID (全局唯一) '],
+	    ['跨平台', '几乎所有OS支持', 'Win Vista+/Linux 2.6+/macOS 10.4+'],
+	    ['磁盘GUID', '无', '有,唯一标识磁盘'],
+	  ];
+	  const rowH=34, colW=230, startY=432;
+	  cmpData.forEach((row,ri)=>{
+	    row.forEach((cell,ci)=>{
+	      const cx=200+ci*colW;
+	      const cy=startY+ri*rowH;
+	      const fill=ri===0?'rgba(88,166,255,0.08)':(ri%2===0?'rgba(255,255,255,0.02)':'rgba(255,255,255,0.01)');
+	      const t=el('text',{x:cx,y:cy+18,fill:ri===0?C.accent:C.text,'font-size':ci===0?10:11,'text-anchor':ci===0?'start':'middle'});
+	      if(ri===0||ci===0) t.setAttribute('font-weight','600');
+	      t.textContent=cell; g.append(t);
+	    });
+	  });
+
+	  // ═══ DISK LAYOUT ═══
+	  lbl(600,startY+cmpData.length*rowH+50,'▌磁盘物理布局示意 (GPT 磁盘)','#58a6ff',13);
+	  const lytY=startY+cmpData.length*rowH+70;
+	  // Disk bar
+	  g.append(el('rect',{x:60,y:lytY,width:1080,height:44,rx:6,fill:'rgba(255,255,255,0.02)',stroke:C.edge,'stroke-width':1}));
+	  [{x:60,w:100,label:'保护MBR\nLBA 0',c:C.vol},{x:160,w:40,label:'GPT\n头\nLBA1',c:C.green},{x:200,w:200,label:'分区条目\nLBA 2-33',c:C.green},{x:400,w:460,label:'分 区 数 据 区 (用户可用空间)',c:C.accent},{x:860,w:200,label:'分区条目(备份)\nLBA_last-32 ~ last-1',c:C.green},{x:1060,w:80,label:'备份\nGPT头',c:C.green}].forEach(seg=>{
+	    g.append(el('rect',{x:seg.x,y:lytY,width:seg.w,height:44,fill:'rgba(255,255,255,0.01)',stroke:seg.c,'stroke-width':1.5}));
+	    const t=el('text',{x:seg.x+seg.w/2,y:lytY+22,fill:seg.c,'font-size':9,'text-anchor':'middle'});t.textContent=seg.label;g.append(t);
+	  });
+	  // Arrow to indicate primary → backup
+	  lbl(600,lytY+68,'← 主 GPT ─────────────────────────────────────────── 备份 GPT →','#8b949e',10);
+
+	  svg.append(g); return svg;
+	}
+
+	function drawDiskInitFormatSVG() {
+	  const W=1200, H=1250;
+	  const svg=makeSvg(W,H);
+	  const g=el('g',{fontFamily:'"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif'});
+	  const defs=el('defs');
+	  defs.innerHTML='<marker id="nf" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#484f58"/></marker>';
+	  g.append(defs);
+
+	  const node=(x,y,w,h,text,sub,color,opts={})=>{
+	    const fill=opts.fill||'rgba(255,255,255,0.02)';
+	    const r=el('rect',{x:x-w/2,y:y-h/2,width:w,height:h,rx:opts.diamond?0:8,fill,stroke:color,'stroke-width':1.5});
+	    if(opts.dashed) r.setAttribute('stroke-dasharray','5 4');
+	    g.append(r);
+	    const lines=text.split('\n');
+	    lines.forEach((ln,i)=>{
+	      const t=el('text',{x,y:y+(lines.length===1?5:0)+(i-(lines.length-1)/2)*(opts.small?12:14),fill:opts.dim?C.dim:C.text,'font-size':opts.small?10:11,'text-anchor':'middle'});
+	      if(i===0&&!opts.small&&!opts.dim) t.setAttribute('font-weight','600');
+	      t.textContent=ln; g.append(t);
+	    });
+	    if(sub){const s=el('text',{x:x-w/2+8,y:y-h/2+14,fill:color,'font-size':9,'text-anchor':'start'});s.textContent=sub;g.append(s);}
+	  };
+
+	  const arr=(x1,y1,x2,y2,color)=>{
+	    g.append(el('line',{x1,y1,x2,y2,stroke:color||'#484f58','stroke-width':1.8,markerEnd:'url(#nf)'}));
+	  };
+	  const darr=(x1,y1,x2,y2,color)=>{
+	    g.append(el('line',{x1,y1,x2,y2,stroke:color||'#484f58','stroke-width':1.5,'stroke-dasharray':'6 4',markerEnd:'url(#nf)'}));
+	  };
+	  const lbl=(x,y,text,color,size)=>{const t=el('text',{x,y,fill:color||C.dim,'font-size':size||10,'text-anchor':'middle'});t.textContent=text;g.append(t);};
+
+	  const CX=600; let cy=20;
+
+	  // Title
+	  lbl(CX,cy,'▌NTFS 格式化详解 — format X: /FS:NTFS 的幕后步骤','#3fb950',13); cy+=22;
+
+	  // Step 1: VBR
+	  node(CX,cy,620,75,'步骤 1: 写入 VBR (Volume Boot Record) — 分区第一个扇区','','内容: BIOS Parameter Block (BPB) + 引导代码',C.green,{fill:'rgba(63,185,80,0.06)'});
+	  const bp=[
+	    [295,cy-20,'字节/扇区: 512 (或 4096 4Kn)'],
+	    [295,cy-5,'扇区/簇: 通常4KB→8扇区 (格式时或由系统决定)'],
+	    [295,cy+10,'保留扇区: VBR 后的保留区域(通常16扇区)'],
+	    [295,cy+25,'MFT 起始 LCN: MFT 在卷中的位置(默认卷 12.5% 处开始)'],
+	    [295,cy+40,'MFTMirr 起始 LCN: MFT 镜像位置(默认卷中间附近)'],
+	  ];
+	  bp.forEach(([bx,by,bt])=>{const t=el('text',{x:bx,y:by,fill:C.dim,'font-size':9,'text-anchor':'start'});t.textContent=bt;g.append(t);});
+	  cy+=52; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 2: MFT
+	  node(CX,cy,620,230,'步骤 2: 创建 MFT (主文件表) — 写入前16条元数据记录','','每条记录 1KB',C.fs,{fill:'rgba(63,185,80,0.08)'});
+	  const mft=[
+	    [295,cy-100,'条目0: $MFT → 描述 MFT 自身 (Run List 指向 MFT 占用的簇)'],
+	    [295,cy-82,'条目1: $MFTMirr → MFT 前4条记录的镜像(如MFT首簇损坏可恢复)'],
+	    [295,cy-64,'条目2: $LogFile → 事务日志(预分配~64MB · LSN=0 · 空日志页链)'],
+	    [295,cy-46,'条目3: $Volume → 卷名(Unicode) · NTFS版本(3.1) · Dirty Bit=1'],
+	    [295,cy-28,'条目4: $AttrDef → 属性定义表(固定内容 · 描述每种属性类型)'],
+	    [295,cy-10,'条目5: . (根目录) → 空 $INDEX_ROOT B+树(等待文件创建)'],
+	    [295,cy+8,'条目6: $Bitmap → 簇分配位图(此时标记元数据簇=1 · 其余=0)'],
+	    [295,cy+26,'条目7: $Boot → VBR 的备份(如原 VBR 损坏可恢复)'],
+	    [295,cy+44,'条目8: $BadClus → 坏簇列表(空 · 后续发现坏簇时记录)'],
+	    [295,cy+62,'条目9: $Secure → 安全描述符数据库(空 · 首次设置权限时填充)'],
+	    [295,cy+80,'条目10: $UpCase → Unicode 大写表(128KB · 固定 · 大小写不敏感查询)'],
+	    [295,cy+98,'条目11: $Extend → 扩展元文件目录(含 $ObjId/$Quota/$Reparse 等)'],
+	  ];
+	  mft.forEach(([mx,my,mt])=>{const t=el('text',{x:mx,y:my,fill:C.dim,'font-size':9,'text-anchor':'start'});t.textContent=mt;g.append(t);});
+	  cy+=130; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 3: $Bitmap init
+	  node(CX,cy,620,56,'步骤 3: 初始化 $Bitmap (簇分配位图)','计算元数据簇占用: VBR(1簇) + MFT(按比例) + MFTMirr + $LogFile + 根目录索引\n在 $Bitmap 中将对应 bit 置为 1 · 其余所有数据区 bit 保持 0(空闲)\n$Bitmap 文件本身的簇也在自身中标记为已分配(自引用)','至此, NTFS 知道哪些簇已被元数据占用,哪些可用于新文件',C.green,{fill:'rgba(63,185,80,0.06)',small:true});
+	  cy+=43; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 4: $LogFile
+	  node(CX,cy,620,52,'步骤 4: 初始化 $LogFile (事务日志引擎)','在卷中分配 $LogFile 的簇 (默认 64MB, 视卷大小调整)\n初始化日志页 (Log Page, 4KB/页): 链式结构 · 环形缓冲区\n设置起始 LSN=0 · 写第一个 Restart Record · Checkpoint 记录\n日志就绪: 后续所有 NTFS 元数据修改都先经由 $LogFile','WAL 写入路径: BeginTxn → LogRecords → CommitTxn → Checkpoint',C.green,{fill:'rgba(63,185,80,0.06)',small:true});
+	  cy+=41; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 5: UpCase + Secure
+	  node(CX,cy,620,48,'步骤 5: 写入 $UpCase 大写转换表 & 初始化 $Secure','从 Ntfs.sys 内置的 128KB 固定表写入 $UpCase\n$UpCase: Unicode 字符 → 大写映射, 用于大小写不敏感文件名查询\n$Secure: 创建空的安全描述符索引, 首次文件创建时写入 ACL','这些元文件通过 $Extend 目录 (条目11) 暴露给用户',C.fs,{fill:'rgba(63,185,80,0.04)',small:true});
+	  cy+=39; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Step 6: Dirty bit + mount
+	  node(CX,cy,620,48,'步骤 6: 设置卷 Dirty Bit · 触发挂载','$Volume 属性的 Dirty Flag = 1 (表示卷需要一致性检查)\n正常卸载(重启/手动卸载)时清除 Dirty Bit\n系统崩溃导致 Dirty Bit 保留为1 → 下次挂载自动运行 Chkdsk\n挂载完成 → 清除 Dirty Bit → 卷状态"健康"','首次挂载: Chkdsk 扫描 → 确认元数据结构正确 → 清除 Dirty Bit',C.accent,{fill:'rgba(88,166,255,0.06)',small:true});
+	  cy+=39; arr(CX,cy-15,CX,cy+10); cy+=18;
+
+	  // Completion
+	  node(CX,cy,480,48,'✓ 格式化完成 — 卷可正常使用','CreateFile / ReadFile / WriteFile → NTFS → 物理磁盘',C.green,{fill:'rgba(63,185,80,0.12)'});
+
+	  // Right: Format parameters
+	  lbl(960,60,'← format 命令参数','#8b949e',9);
+	  [{y:78,t:'/FS:NTFS — 文件系统类型'},{y:94,t:'/Q — 快速格式化 (仅重建元数据)'},{y:110,t:'/A:4096 — 分配单元(簇)大小'},{y:126,t:'/V:label — 卷标名称'},{y:142,t:'/C — 启用文件级压缩'},{y:158,t:'/X — 格式化前强制卸载卷'}].forEach(({y,t})=>{
+	    const tx=el('text',{x:960,y,fill:C.dim,'font-size':9,'text-anchor':'start'});tx.textContent=t;g.append(tx);
+	  });
+
+	  // Quick format note
+	  lbl(960,195,'快速格式化 vs 完整格式化','#d2991d',10);
+	  [{y:213,t:'快速(/Q): 仅重建 MFT/$Bitmap/$LogFile'},{y:229,t:'→ 几秒完成 · 旧数据仍存在磁盘'},{y:245,t:'完整格式化: 额外扫描所有扇区'},{y:261,t:'→ 检测坏簇 + 填零(慢) · Win7+'},{y:277,t:'→ Vista 及之前: 完整格式化=快速格式化'}].forEach(({y,t})=>{
+	    const tx=el('text',{x:960,y,fill:C.dim,'font-size':9,'text-anchor':'start'});tx.textContent=t;g.append(tx);
+	  });
+
+	  // MFT Zone illustration
+	  lbl(280,650,'▌NTFS 卷格式化后布局','#3fb950',13);
+	  const lytY=670;
+	  g.append(el('rect',{x:60,y:lytY,width:1080,height:50,rx:6,fill:'rgba(255,255,255,0.02)',stroke:C.edge,'stroke-width':1}));
+	  [{x:60,w:40,l:'VBR',c:C.hw},{x:100,w:16,l:'保留',c:C.vol},{x:116,w:120,l:'MFT Zone (预留12.5%)',c:C.fs},{x:236,w:60,l:'数据区',c:C.accent},{x:296,w:80,l:'$MFT(数据区内)',c:C.fs},{x:376,w:60,l:'$LogFile',c:C.green},{x:436,w:60,l:'$Bitmap',c:C.green},{x:496,w:644,l:'用户文件数据 + 目录 + 扩展元数据 + 剩余MFT记录',c:C.accent}].forEach(seg=>{
+	    g.append(el('rect',{x:seg.x,y:lytY,width:seg.w,height:50,fill:'rgba(255,255,255,0.01)',stroke:seg.c,'stroke-width':1.5}));
+	    if(seg.w>30){const t=el('text',{x:seg.x+seg.w/2,y:lytY+25,fill:seg.c,'font-size':9,'text-anchor':'middle'});t.textContent=seg.l;g.append(t);}
+	  });
+
+	  svg.append(g); return svg;
+	}
+
+	// ─── INIT ───
+drawOverview();
+</script>
+</body>
+</html>

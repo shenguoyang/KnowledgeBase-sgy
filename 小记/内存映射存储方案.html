@@ -1,0 +1,1467 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>内存映射磁盘存储方案</title>
+<style>
+:root {
+  --nav-width: 280px;
+  --primary: #8b5cf6;
+  --primary-light: #f5f3ff;
+  --bg: #f8fafc;
+  --card-bg: #ffffff;
+  --text: #1e293b;
+  --text-secondary: #64748b;
+  --border: #e2e8f0;
+  --code-bg: #1e293b;
+  --code-text: #e2e8f0;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --radius: 8px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; display: flex; min-height: 100vh; }
+
+nav {
+  width: var(--nav-width); min-width: var(--nav-width);
+  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+  color: #cbd5e1; position: fixed; top: 0; left: 0; bottom: 0;
+  overflow-y: auto; overflow-x: hidden; z-index: 100;
+  scrollbar-width: thin; scrollbar-color: #334155 transparent;
+}
+nav::-webkit-scrollbar { width: 4px; }
+nav::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+nav .logo {
+  padding: 24px 20px 20px; border-bottom: 1px solid #334155;
+  font-size: 15px; font-weight: 700; color: #f1f5f9;
+  letter-spacing: 0.5px; display: flex; align-items: center; gap: 10px;
+}
+nav .logo .icon { width: 32px; height: 32px; background: var(--primary); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+nav ul { list-style: none; padding: 8px 0; }
+nav li a {
+  display: block; padding: 8px 20px 8px 24px; color: #94a3b8;
+  text-decoration: none; font-size: 13.5px; transition: all .15s;
+  border-left: 3px solid transparent;
+}
+nav li a:hover { color: #e2e8f0; background: rgba(255,255,255,.04); }
+nav li a.active { color: #fff; background: rgba(139,92,246,.15); border-left-color: var(--primary); font-weight: 600; }
+nav li a.sub { padding-left: 40px; font-size: 12.5px; }
+nav .section-title { padding: 16px 20px 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: #64748b; font-weight: 700; }
+
+main { margin-left: var(--nav-width); flex: 1; padding: 32px 40px; max-width: 1100px; }
+section { margin-bottom: 48px; }
+h1 { font-size: 28px; font-weight: 800; margin-bottom: 8px; color: #0f172a; }
+h2 { font-size: 22px; font-weight: 700; margin: 32px 0 16px; padding-bottom: 8px; border-bottom: 2px solid var(--border); color: #0f172a; }
+h3 { font-size: 17px; font-weight: 600; margin: 24px 0 10px; color: #334155; }
+h4 { font-size: 15px; font-weight: 600; margin: 16px 0 8px; color: #475569; }
+p { margin: 8px 0; color: #475569; }
+.card { background: var(--card-bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; margin: 16px 0; box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+pre { background: var(--code-bg); color: var(--code-text); padding: 16px 20px; border-radius: var(--radius); overflow-x: auto; font-size: 13px; line-height: 1.6; margin: 12px 0; }
+code { font-family: "Cascadia Code", "Fira Code", "Consolas", monospace; font-size: 13px; }
+:not(pre) > code { background: #f1f5f9; color: var(--primary); padding: 2px 6px; border-radius: 4px; font-size: 12.5px; }
+table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13.5px; }
+th, td { border: 1px solid var(--border); padding: 10px 14px; text-align: left; }
+th { background: #f8fafc; font-weight: 700; color: #334155; font-size: 12.5px; text-transform: uppercase; letter-spacing: .5px; }
+td { color: #475569; }
+tr:hover td { background: #fafbfc; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+.badge-ok { background: #dcfce7; color: #166534; }
+.badge-warn { background: #fef3c7; color: #92400e; }
+.badge-info { background: #dbeafe; color: #1e40af; }
+.badge-purple { background: #f3e8ff; color: #6b21a8; }
+.note { border-left: 4px solid var(--primary); background: var(--primary-light); padding: 12px 16px; border-radius: 0 var(--radius) var(--radius) 0; margin: 12px 0; font-size: 13.5px; }
+.stars { color: var(--warning); letter-spacing: 2px; }
+
+.vis-container { position: relative; margin: 20px 0; }
+.vis-canvas { display: block; width: 100%; border: 1px solid var(--border); border-radius: var(--radius); background: #fff; cursor: default; }
+.vis-controls { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+.vis-controls button {
+  padding: 7px 16px; border: 1px solid var(--border); border-radius: 6px;
+  background: #fff; cursor: pointer; font-size: 13px; font-weight: 500;
+  transition: all .15s; color: #334155;
+}
+.vis-controls button:hover { background: var(--primary-light); border-color: var(--primary); color: var(--primary); }
+.vis-controls button:active { transform: scale(.97); }
+.vis-controls button.primary-btn { background: var(--primary); color: #fff; border-color: var(--primary); }
+.vis-controls button.primary-btn:hover { background: #7c3aed; }
+.vis-info { font-size: 13px; color: var(--text-secondary); margin-left: auto; }
+.vis-legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); margin-top: 6px; }
+.vis-legend span { display: flex; align-items: center; gap: 4px; }
+.vis-legend .swatch { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+
+.anim-stage { background: var(--card-bg); border: 2px dashed var(--border); border-radius: var(--radius); padding: 24px; position: relative; overflow: hidden; margin: 16px 0; min-height: 280px; }
+.disk-grid { display: flex; gap: 1px; flex-wrap: wrap; align-items: flex-end; }
+.disk-block { width: 36px; border-radius: 3px; transition: all .3s ease; position: relative; font-size: 9px; color: #fff; text-align: center; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.disk-block:hover { transform: scale(1.15); z-index: 2; box-shadow: 0 4px 12px rgba(0,0,0,.2); }
+.disk-block.empty { background: #e2e8f0; border: 1px solid #cbd5e1; }
+.disk-block.used { background: linear-gradient(135deg, #8b5cf6, #7c3aed); border: 1px solid #6d28d9; }
+.disk-block.overwritten { background: linear-gradient(135deg, #f59e0b, #d97706); border: 1px solid #b45309; animation: pulse .6s ease; }
+.disk-block.fragmented { background: repeating-linear-gradient(45deg, #ef4444, #ef4444 2px, #dc2626 2px, #dc2626 4px); border: 1px solid #b91c1c; }
+@keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.3); } 100% { transform: scale(1); } }
+
+@media (max-width: 900px) {
+  nav { width: 200px; min-width: 200px; }
+  main { margin-left: 200px; padding: 20px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══════════════ 左侧导航 ═══════════════ -->
+<nav>
+  <div class="logo"><span class="icon">◆</span> 内存映射存储方案</div>
+  <ul>
+    <li><a href="#s-principle" class="active">🎬 原理可视化演示</a></li>
+    <li class="section-title">方案设计</li>
+    <li><a href="#s-startup-defrag">启动整理与空间独占</a></li>
+    <li><a href="#s-background">背景与目标</a></li>
+    <li><a href="#s-architecture">总体架构</a></li>
+    <li><a href="#s-data-structures">数据结构设计</a></li>
+    <li><a href="#s-mapping-principle">内存映射原理</a></li>
+    <li><a href="#s-algorithms">关键算法</a></li>
+    <li><a href="#s-concurrency">并发模型</a></li>
+    <li><a href="#s-recovery">异常恢复</a></li>
+    <li><a href="#s-windows">Windows 平台要点</a></li>
+    <li><a href="#s-config">配置参数设计</a></li>
+    <li><a href="#s-integration">系统集成</a></li>
+    <li><a href="#s-comparison">优缺点与对比</a></li>
+    <li class="section-title">C++ 组件库</li>
+    <li><a href="#s-api-types">公共类型定义</a></li>
+    <li><a href="#s-api-class">MMapRingBuffer 接口</a></li>
+    <li><a href="#s-api-usage">使用示例</a></li>
+    <li><a href="#s-api-checklist">接口确认清单</a></li>
+  </ul>
+</nav>
+
+<!-- ═══════════════ 右侧内容 ═══════════════ -->
+<main>
+
+<!-- ══════════════ 原理可视化演示 ══════════════ -->
+<section id="s-principle">
+  <h1>🎬 底层原理可视化演示</h1>
+  <p>以下演示帮助理解内存映射如何消除磁盘碎片，以及为什么 memcpy 比 WriteFile 更快。</p>
+
+  <!-- 演示1: 碎片问题 -->
+  <h3>📌 第一幕：碎片是怎么产生的？</h3>
+  <div class="card">
+    <p>想象磁盘是一排<strong>储物柜</strong>，每来一辆车就创建一个新文件来存图像。随着文件不断创建和删除，磁盘上出现大量"空洞"——这就是<strong>磁盘碎片</strong>。</p>
+    <div class="anim-stage" id="stage-frag">
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">⬇ 传统方式：每张图一个文件，随意创建/删除</p>
+      <div class="disk-grid" id="grid-frag"></div>
+      <div class="vis-legend" style="margin-top:12px;">
+        <span><span class="swatch" style="background:#8b5cf6;"></span> 正常文件</span>
+        <span><span class="swatch" style="background:#e2e8f0;"></span> 空闲空间</span>
+        <span><span class="swatch" style="background:repeating-linear-gradient(45deg,#ef4444,#ef4444 2px,#dc2626 2px,#dc2626 4px);"></span> 碎片空洞</span>
+      </div>
+      <div class="vis-controls">
+        <button onclick="fragSim.addRandom()">存入随机文件</button>
+        <button onclick="fragSim.deleteRandom()">随机删除文件</button>
+        <button onclick="fragSim.reset()">重置</button>
+        <span class="vis-info" id="frag-info"></span>
+      </div>
+      <div class="note">
+        <strong>关键洞察：</strong>每张图一个小文件 → 日积月累 → 磁盘变成"瑞士奶酪" → 新文件找不到整块空间 → 被"撕碎"存放 → 磁头疯狂跳动 → 写入速度越来越慢。
+      </div>
+    </div>
+  </div>
+
+  <!-- 演示2: 预分配+环形缓冲 -->
+  <h3>📌 第二幕：预分配——先占坑、再填坑</h3>
+  <div class="card">
+    <p>本方案的核心思想：启动时一次性<strong>预分配</strong>整个大文件，然后通过<strong>内存映射</strong>把它变成一块"虚拟内存"。写入新图像只需 <code>memcpy</code>，写满后自动回到开头覆盖最早的数据。</p>
+    <div class="anim-stage" id="stage-ring">
+      <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">⬇ 环形缓冲区 + 内存映射：通过指针直接读写，零系统调用</p>
+      <canvas id="ring-canvas" class="vis-canvas" height="320"></canvas>
+      <div class="vis-legend">
+        <span><span class="swatch" style="background:#e2e8f0;"></span> 空闲 Block</span>
+        <span><span class="swatch" style="background:#8b5cf6;"></span> 已写入</span>
+        <span><span class="swatch" style="background:#f59e0b;"></span> 被覆盖</span>
+        <span style="margin-left:12px;">🔴 写入指针</span>
+      </div>
+      <div class="vis-controls">
+        <button class="primary-btn" onclick="ringSim.writeImage()">写入一张图像 (memcpy)</button>
+        <button onclick="ringSim.writeBatch(5)">连续写 5 张</button>
+        <button onclick="ringSim.writeBatch(20)">连续写 20 张</button>
+        <button onclick="ringSim.reset()">重置</button>
+        <span class="vis-info" id="ring-info"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 演示3: 文件内部布局（两区布局） -->
+  <h3>📌 第三幕：文件里面长什么样？</h3>
+  <div class="card">
+    <p>整个文件采用<strong>两区布局</strong>，元数据集中在文件前部，与 Block 数据区分开。就像一本<strong>带目录的相册</strong>：</p>
+    <canvas id="layout-canvas" class="vis-canvas" height="180"></canvas>
+    <div class="vis-legend">
+      <span><span class="swatch" style="background:#0f172a;"></span> Header（文件头 — 4KB）</span>
+      <span><span class="swatch" style="background:#8b5cf6;"></span> BlockMeta 区（元数据集中存放）</span>
+      <span><span class="swatch" style="background:#10b981;"></span> Block 区（变长图像数据）</span>
+    </div>
+    <div class="note">
+      <strong>为什么 BlockMeta 集中在前面？</strong>崩溃恢复时顺序读取 BlockMeta 区即可获得全部元数据，无需跳跃扫描。写入时 BlockMeta 紧邻 Header，一次 Seek 即可更新两者。
+    </div>
+  </div>
+
+  <!-- 演示4: memcpy vs WriteFile -->
+  <h3>📌 第四幕：memcpy 为什么比 WriteFile 快？</h3>
+  <div class="card">
+    <p>传统 WriteFile 需要<strong>用户态 → 内核态切换</strong>，数据先拷到内核缓冲区再写磁盘。内存映射直接把文件页映射到用户地址空间，<strong>一次 memcpy 即完成写入</strong>。</p>
+    <canvas id="zerocopy-canvas" class="vis-canvas" height="260"></canvas>
+    <div class="vis-legend">
+      <span><span class="swatch" style="background:#ef4444;"></span> WriteFile 路径（2 次拷贝 + 内核切换）</span>
+      <span><span class="swatch" style="background:#10b981;"></span> memcpy 路径（0 次额外拷贝，0 次内核切换）</span>
+    </div>
+    <div class="note">
+      <strong>零拷贝（Zero-Copy）的含义：</strong>不是说不拷贝数据，而是省去了内核中转。以下逐步骤对比：
+    </div>
+    <table style="margin-top:12px;">
+      <tr><th>步骤</th><th>WriteFile 方案（方案一/二）</th><th>内存映射方案（方案三）</th><th></th></tr>
+      <tr>
+        <td><strong>① 定位</strong></td>
+        <td><code>SetFilePointerEx(hFile, offset)</code><br>→ <span style="color:#ef4444;">用户态→内核态→返回</span></td>
+        <td><code>ptr = mappedView + offset</code><br>→ <span style="color:#10b981;">纯用户态指针运算，0 次系统调用</span></td>
+        <td><span class="badge badge-purple">✅ 跳过</span></td>
+      </tr>
+      <tr>
+        <td><strong>② 写入</strong></td>
+        <td><code>WriteFile(hFile, buf, size)</code><br>→ <span style="color:#ef4444;">用户态→内核态→I/O管理器→拷到内核缓冲区→返回</span></td>
+        <td><code>memcpy(mappedView+offset, buf, size)</code><br>→ <span style="color:#10b981;">CPU 直接写入文件缓存页，硬件 MMU 完成地址翻译</span></td>
+        <td><span class="badge badge-purple">✅ 跳过</span></td>
+      </tr>
+      <tr>
+        <td><strong>③ 中间拷贝</strong></td>
+        <td>用户缓冲区 → 内核缓冲区 → 文件缓存<br>→ <span style="color:#ef4444;">至少 1 次额外内存拷贝</span></td>
+        <td>用户缓冲区 → 文件缓存页<br>→ <span style="color:#10b981;">直接拷贝到目标，无中转</span></td>
+        <td><span class="badge badge-purple">✅ 跳过</span></td>
+      </tr>
+      <tr>
+        <td><strong>④ 刷盘</strong></td>
+        <td><code>FlushFileBuffers(hFile)</code><br>→ <span style="color:#ef4444;">用户态→内核态，强制回写</span></td>
+        <td>OS Lazy Writer 自动异步刷盘<br>→ <span style="color:#10b981;">无需调用（关键节点可选 FlushViewOfFile）</span></td>
+        <td><span class="badge badge-ok">✅ 通常跳过</span></td>
+      </tr>
+    </table>
+    <p style="margin-top:8px; font-size:13px; color:var(--text-secondary);">
+      一次写入从 <strong>2 次 Seek + 2~3 次 WriteFile + FlushFileBuffers ≈ 5~6 次系统调用</strong>，降至 <strong>1 次 memcpy ≈ 0 次系统调用</strong>。用户态↔内核态切换从约 10~12 次降为 0。
+    </p>
+  </div>
+
+  <!-- 演示5: 虚拟内存原理 -->
+  <h3>📌 第五幕：虚拟内存 ≠ 物理内存</h3>
+  <div class="card">
+    <p>很多人担心：「文件 2TB，内存映射岂不是要 2TB 内存？」——这是对内存映射最常见的误解。</p>
+    <div style="display:flex;gap:20px;flex-wrap:wrap;margin:16px 0;">
+      <div style="flex:1;min-width:280px;">
+        <h4>❌ 错误理解</h4>
+        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:16px;font-size:13px;">
+          MapViewOfFile(2TB) → 消耗 2TB 物理 RAM → ❌ 不可能！
+        </div>
+      </div>
+      <div style="flex:1;min-width:280px;">
+        <h4>✅ 正确理解</h4>
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:16px;font-size:13px;">
+          MapViewOfFile(2TB) → 消耗 2TB <strong>虚拟地址空间</strong>（64 位有 128TB，够用）<br>
+          物理内存仅在<strong>实际访问时按需分配</strong>（4KB 页粒度）<br>
+          写入时只需当前操作的那几页在物理内存中（几 KB~几 MB）
+        </div>
+      </div>
+    </div>
+    <div class="note" style="margin-top:12px;">
+      <strong>任务管理器显示「虚拟内存」飙升到 40GB？不必担心。</strong>那是虚拟地址空间占用，不是物理 RAM。真正需要关注的指标是「工作集」（物理内存占用）和「提交大小」——这两项几乎不受文件映射影响。详见下文<a href="#s-mapping-principle">内存映射原理</a>章节的完整解释。
+    </div>
+    <canvas id="vmem-canvas" class="vis-canvas" height="280"></canvas>
+    <div class="vis-legend">
+      <span><span class="swatch" style="background:#8b5cf6;"></span> 已映射的虚拟页（在物理内存中）</span>
+      <span><span class="swatch" style="background:#e2e8f0;"></span> 已映射的虚拟页（未访问，不在物理内存）</span>
+      <span><span class="swatch" style="background:#f59e0b;"></span> 脏页（已修改，待 OS 刷回磁盘）</span>
+    </div>
+  </div>
+
+  <!-- 演示6: 启动整理+空间独占 -->
+  <h3>📌 第六幕：启动时磁盘整理 + 空间独占</h3>
+  <div class="card">
+    <p>应用启动时，首先<strong>分析磁盘空闲空间布局</strong>，找到最大连续空闲区域，然后预分配文件、验证连续性。最后用 <strong>dwShareMode=0</strong> 独占锁定文件。</p>
+    <div style="display:flex;gap:12px;margin:16px 0;flex-wrap:wrap;">
+      <div id="defrag-step1" style="flex:1;min-width:180px;background:#f8fafc;border:2px solid #e2e8f0;border-radius:8px;padding:14px;text-align:center;transition:all .4s ease;">
+        <div style="font-size:32px;margin-bottom:6px;">🔍</div>
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;">① 分析空闲位图</div>
+        <div style="font-size:11px;color:#64748b;">FSCTL_GET_VOLUME_BITMAP</div>
+        <div id="defrag-info-1" style="font-size:11px;color:#94a3b8;margin-top:6px;"></div>
+      </div>
+      <div style="display:flex;align-items:center;font-size:20px;color:#cbd5e1;">➤</div>
+      <div id="defrag-step2" style="flex:1;min-width:180px;background:#f8fafc;border:2px solid #e2e8f0;border-radius:8px;padding:14px;text-align:center;transition:all .4s ease;">
+        <div style="font-size:32px;margin-bottom:6px;">📦</div>
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;">② 预分配 + 验证</div>
+        <div style="font-size:11px;color:#64748b;">SetFileValidData + FSCTL_GET_RETRIEVAL_POINTERS</div>
+        <div id="defrag-info-2" style="font-size:11px;color:#94a3b8;margin-top:6px;"></div>
+      </div>
+      <div style="display:flex;align-items:center;font-size:20px;color:#cbd5e1;">➤</div>
+      <div id="defrag-step3" style="flex:1;min-width:180px;background:#f8fafc;border:2px solid #e2e8f0;border-radius:8px;padding:14px;text-align:center;transition:all .4s ease;">
+        <div style="font-size:32px;margin-bottom:6px;">🔒</div>
+        <div style="font-weight:700;font-size:13px;margin-bottom:4px;">③ 独占锁定</div>
+        <div style="font-size:11px;color:#64748b;">dwShareMode=0 + LockFileEx</div>
+        <div id="defrag-info-3" style="font-size:11px;color:#94a3b8;margin-top:6px;"></div>
+      </div>
+    </div>
+    <div style="display:flex;gap:1px;flex-wrap:wrap;background:#fff;border:1px solid #e2e8f0;border-radius:4px;padding:8px;min-height:40px;align-items:flex-start;" id="defrag-disk-viz"></div>
+    <div class="vis-legend" style="margin-top:6px;">
+      <span><span class="swatch" style="background:#8b5cf6;"></span> 我们的环形文件</span>
+      <span><span class="swatch" style="background:#ef4444;"></span> 碎片化的其他文件</span>
+      <span><span class="swatch" style="background:#e2e8f0;"></span> 空闲空间</span>
+    </div>
+    <div class="vis-controls">
+      <button class="primary-btn" onclick="defragSim.run()">▶ 模拟启动整理流程</button>
+      <button onclick="defragSim.reset()">重置磁盘状态</button>
+      <span class="vis-info" id="defrag-info"></span>
+    </div>
+  </div>
+
+  <h3>📌 一图胜千言：传统 vs 本方案 vs WriteFile 方案</h3>
+  <table>
+    <tr><th></th><th>传统（每图一个文件）</th><th>WriteFile 环形缓冲</th><th>本方案（内存映射）</th></tr>
+    <tr>
+      <td><strong>文件数量</strong></td>
+      <td>10000 个小文件</td>
+      <td><span class="badge badge-ok">1 个大文件</span></td>
+      <td><span class="badge badge-purple">1 个大文件</span></td>
+    </tr>
+    <tr>
+      <td><strong>磁盘碎片</strong></td>
+      <td><span class="badge badge-warn">日益严重</span></td>
+      <td><span class="badge badge-ok">零碎片</span></td>
+      <td><span class="badge badge-ok">零碎片</span></td>
+    </tr>
+    <tr>
+      <td><strong>写入方式</strong></td>
+      <td>CreateFile + WriteFile</td>
+      <td>WriteFile ×2</td>
+      <td><span class="badge badge-purple">memcpy ×1（零拷贝）</span></td>
+    </tr>
+    <tr>
+      <td><strong>内核切换</strong></td>
+      <td>每次写多次切换</td>
+      <td>~4 次 / 次写入</td>
+      <td><span class="badge badge-purple">0 次（写入时）</span></td>
+    </tr>
+    <tr>
+      <td><strong>空间利用率</strong></td>
+      <td>~99%</td>
+      <td>~70%（固定块）</td>
+      <td><span class="badge badge-purple">~99%（变长块）</span></td>
+    </tr>
+    <tr>
+      <td><strong>崩溃恢复</strong></td>
+      <td>需扫描目录</td>
+      <td>扫描 Index 自愈</td>
+      <td><span class="badge badge-purple">顺序读 BlockMeta 即可</span></td>
+    </tr>
+  </table>
+</section>
+
+<!-- ══════════════ 方案设计 ══════════════ -->
+<section id="s-startup-defrag">
+  <h2>启动时磁盘整理与空间独占</h2>
+  <div class="card">
+    <h3>为什么需要启动整理？</h3>
+    <p>单纯预分配文件，NTFS 会<strong>尽力</strong>分配连续空间，但如果磁盘已经碎片化，NTFS 可能只能给碎片化的空间。因此需要在程序启动时主动分析、整理、验证，确保获得物理连续的磁盘区域。</p>
+
+    <h3>五步启动序列</h3>
+    <pre>┌──────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+│ ① 分析   │───▶│ ② 创建+预分配│───▶│ ③ 验证连续性 │───▶│ ④ 碎片整理  │───▶│ ⑤ 独占锁定  │
+│ 空闲空间 │    │   环形文件    │    │  (extent数)  │    │  (如需)     │    │  (防其他程序)│
+└──────────┘    └──────────────┘    └──────────────┘    └──────────────┘    └──────────────┘</pre>
+
+    <h4>① 分析空闲空间 — FSCTL_GET_VOLUME_BITMAP</h4>
+    <p>向卷发送 IOCTL 获取空闲簇位图，每一位代表一个簇的分配状态。遍历位图找到最大的连续空闲区段，判断是否 ≥ 目标文件大小。</p>
+
+    <h4>② 创建文件并预分配 — SetFileValidData</h4>
+    <p>用 <code>CreateFile(dwShareMode=0)</code> 独占创建文件，然后 <code>SetFileValidData</code> 瞬时标记文件有效数据大小（需 SE_MANAGE_VOLUME_NAME 特权）。NTFS 立刻为全部字节分配物理簇。无特权时回退到 SetEndOfFile + 分块写零（64MB Overlapped I/O）。</p>
+
+    <h4>③ 验证物理连续性 — FSCTL_GET_RETRIEVAL_POINTERS</h4>
+    <p>查询文件的物理 extent 布局：</p>
+    <table>
+      <tr><th>Extent 数量</th><th>评级</th><th>处理</th></tr>
+      <tr><td>= 1</td><td><span class="badge badge-ok">完美连续</span></td><td>无需处理，直接进入运行</td></tr>
+      <tr><td>2 ~ 3</td><td><span class="badge badge-info">可接受</span></td><td>记录日志，继续运行</td></tr>
+      <tr><td>≥ 4</td><td><span class="badge badge-warn">需要整理</span></td><td>触发 FSCTL_MOVE_FILE 强制重排</td></tr>
+    </table>
+
+    <h4>④ 碎片整理 — FSCTL_MOVE_FILE</h4>
+    <p>如果 extent 数量超标，向卷发送 <code>FSCTL_MOVE_FILE</code>，让 NTFS 将文件簇重新布局到连续区域。如果仍失败 → 删除文件重建。</p>
+
+    <h4>⑤ 独占锁定 — dwShareMode=0 + LockFileEx</h4>
+    <table>
+      <tr><th>层级</th><th>机制</th><th>效果</th></tr>
+      <tr><td>文件系统层</td><td>NTFS 簇分配</td><td>其他文件无法占用此区域（簇已分配给我们的文件）</td></tr>
+      <tr><td>文件句柄层</td><td><code>dwShareMode=0</code></td><td>其他进程无法打开/读取/写入/删除此文件</td></tr>
+      <tr><td>字节锁层</td><td><code>LockFileEx</code></td><td>进程内对整个文件加排他锁</td></tr>
+    </table>
+    <div class="note"><strong>关键安全保障：</strong><code>dwShareMode=0</code> 意味着即使资源管理器也无法读取此文件。文件已预分配，其占用的物理扇区被 NTFS 标记为已分配，其他程序根本无法写到这里。这构成了真正的空间隔离。</div>
+  </div>
+</section>
+
+<section id="s-background">
+  <h2>背景与目标</h2>
+  <div class="card">
+    <h3>场景描述</h3>
+    <p>Windows 环境下车辆缺陷检测应用，每辆车到达时需存储检测图像。图像大小在 <strong>1MB~3MB</strong> 之间波动。磁盘大部分空间用于存储图像，配置数据极少。</p>
+    <h3>核心问题</h3>
+    <p>长时间运行后<strong>磁盘碎片严重</strong> → 写入速度下降 → 影响检测效率</p>
+    <h3>本方案特点</h3>
+    <p>在预分配单文件基础上，利用 Windows <strong>Memory-Mapped File</strong> 机制将文件映射到进程虚拟地址空间，以 <code>memcpy</code> 替代 <code>WriteFile</code>，实现<strong>零系统调用的写入路径</strong>。</p>
+    <h3>目标</h3>
+    <table>
+      <tr><td>✅</td><td>通过预分配消除磁盘碎片</td></tr>
+      <tr><td>✅</td><td>环形覆盖策略，磁盘空间占用有界</td></tr>
+      <tr><td>✅</td><td>memcpy 写入，零内核切换，性能极致</td></tr>
+      <tr><td>✅</td><td>支持变长存储，空间利用率 ~99%</td></tr>
+      <tr><td>✅</td><td>封装为独立 C++ 组件库</td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="s-architecture">
+  <h2>总体架构</h2>
+  <p>核心思路：将整个图像存储抽象为一个<strong>内存映射环形缓冲区（Memory-Mapped Ring Buffer）</strong>。程序启动时在 NTFS 上一次性预分配一个大文件，通过 <code>CreateFileMapping</code> + <code>MapViewOfFile</code> 映射到进程虚拟地址空间。之后所有读写均通过指针操作，无需任何文件 I/O API。</p>
+  <pre>┌──────────────────────────────────────────────────────────────┐
+│                  预分配文件（单一文件，物理连续）                │
+├────────┬──────────────────────┬──────────┬─────┬──────────────┤
+│ Header │ BlockMeta[0..N-1]    │ Block 0  │ ... │ Block N-1    │
+│ (4KB)  │ (N × sizeof(Meta))  │ (变长)    │     │ (变长)        │
+└────────┴──────────────────────┴──────────┴─────┴──────────────┘
+▲        ▲                      ▲
+│        │                      │
+│        │                      └─ Block 区：实际图像数据
+│        └─ BlockMeta 区：元数据集中存放（时间戳、大小、校验值）
+└─ Header：魔数/版本/写指针/块大小等控制信息
+
+映射后：mappedView 指针指向文件开头
+  mappedView[0..4095]              → Header
+  mappedView[4096..4096+metaSize]  → BlockMeta 数组
+  mappedView[4096+metaSize..]      → Block 数据区</pre>
+  <table>
+    <tr><th>区域</th><th>大小</th><th>说明</th></tr>
+    <tr><td><strong>Header</strong></td><td>4KB</td><td>文件头，存储魔数/版本/写指针/块大小/块数量等控制信息</td></tr>
+    <tr><td><strong>BlockMeta 区</strong></td><td>N × 64B</td><td>每个 Block 的元数据（时间戳、实际大小、校验值），集中存放于文件前部</td></tr>
+    <tr><td><strong>Block 区</strong></td><td>N × BlockSize</td><td>每个 Block 最大 BlockSize 字节，实际存储 ≤ BlockSize 的图像数据（变长）</td></tr>
+  </table>
+  <div class="note"><strong>设计考量：</strong>BlockMeta 集中在 Header 之后，而非分散在每个 Block 后面。这样做的好处：① 崩溃恢复时顺序读取即可获得全部元数据；② BlockMeta + Header 在同一次缓存行回写中更新，减少磁盘 I/O。</div>
+</section>
+
+<section id="s-data-structures">
+  <h2>数据结构设计</h2>
+
+  <h3>文件头 (FileHeader) — 4KB</h3>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>大小</th><th>说明</th></tr>
+    <tr><td><code>magic</code></td><td>uint32</td><td>4B</td><td>魔数 <code>0x4D4D4150</code> ("MMAP")，文件有效性校验</td></tr>
+    <tr><td><code>version</code></td><td>uint32</td><td>4B</td><td>版本号，当前为 1</td></tr>
+    <tr><td><code>block_size</code></td><td>uint32</td><td>4B</td><td>每个 Block 的最大字节数</td></tr>
+    <tr><td><code>block_count</code></td><td>uint32</td><td>4B</td><td>Block 总数量</td></tr>
+    <tr><td><code>write_cursor</code></td><td>uint32</td><td>4B</td><td>下一次写入的物理 Block 索引 (0 ~ N-1)</td></tr>
+    <tr><td><code>total_blocks_written</code></td><td>uint64</td><td>8B</td><td>累计写入 Block 总数（统计用，超过 N 后继续递增）</td></tr>
+    <tr><td><code>total_bytes_written</code></td><td>uint64</td><td>8B</td><td>累计写入字节数（统计用）</td></tr>
+    <tr><td><code>reserved</code></td><td>byte[]</td><td>4056B</td><td>保留，对齐到 4KB</td></tr>
+    <tr><td><code>header_crc32</code></td><td>uint32</td><td>4B</td><td>前 4092 字节的 CRC32 校验值</td></tr>
+  </table>
+
+  <h3>块元数据 (BlockMeta) — 64B</h3>
+  <table>
+    <tr><th>字段</th><th>类型</th><th>大小</th><th>说明</th></tr>
+    <tr><td><code>timestamp</code></td><td>FILETIME</td><td>8B</td><td>图像写入时间（UTC，100ns 粒度）</td></tr>
+    <tr><td><code>actual_size</code></td><td>uint32</td><td>4B</td><td>图像实际字节数，0 = 该块为空</td></tr>
+    <tr><td><code>flags</code></td><td>uint8</td><td>1B</td><td>0x00=Empty, 0x01=Valid</td></tr>
+    <tr><td><code>vehicle_id</code></td><td>wchar_t[16]</td><td>32B</td><td>车辆/工位标识</td></tr>
+    <tr><td><code>reserved</code></td><td>byte[]</td><td>15B</td><td>预留扩展</td></tr>
+    <tr><td><code>data_crc32</code></td><td>uint32</td><td>4B</td><td>对应 Block 中图像数据的 CRC32 校验值</td></tr>
+  </table>
+
+  <h3>块大小选择</h3>
+  <div class="card">
+    <p><strong>推荐：</strong>BlockSize = 最大图像尺寸 × 1.2</p>
+    <p>BlockSize = 3MB × 1.2 ≈ 3.6MB → 向上取整到 <strong>4MB</strong></p>
+    <p>每张图像占用 ≤ BlockSize 的<strong>可变空间</strong>（变长存储）。优点：空间利用率 ~99%，实现简单。极端情况图像超过 BlockSize 需拆分存储（罕见）。</p>
+  </div>
+</section>
+
+<section id="s-mapping-principle">
+  <h2>内存映射原理</h2>
+  <div class="card">
+    <h3>核心概念：虚拟内存 ≠ 物理内存</h3>
+    <p>这是对内存映射最常见的误解。以下用具体数字澄清：</p>
+    <table>
+      <tr><th></th><th>虚拟地址空间</th><th>物理内存 (RAM)</th></tr>
+      <tr><td><strong>MapViewOfFile 映射 2TB 文件</strong></td><td>消耗 2TB（64 位有 128TB）</td><td><span class="badge badge-ok">仅按需分配（4KB 页粒度）</span></td></tr>
+      <tr><td><strong>写入一张 2MB 图像时</strong></td><td>不变（已映射）</td><td>仅 2MB 对应页面在 RAM 中</td></tr>
+      <tr><td><strong>文件其余 99.9% 区域</strong></td><td>已映射但未访问</td><td><span class="badge badge-info">0 字节物理内存占用</span></td></tr>
+    </table>
+
+    <h3>任务管理器的"虚拟内存"飙升：正常且无害</h3>
+    <p>映射 40GB 文件后，Windows 任务管理器中该进程的「虚拟内存」列会显示 +40GB。<strong>这是虚拟地址空间占用，不是物理内存消耗。</strong></p>
+    <table>
+      <tr><th>任务管理器指标</th><th>含义</th><th>映射 40GB 后</th><th>是否值得担心</th></tr>
+      <tr>
+        <td><strong>虚拟大小 (Virtual Size)</strong></td>
+        <td>进程已保留的虚拟地址空间总量</td>
+        <td><span class="badge badge-warn">+40GB</span></td>
+        <td><span class="badge badge-ok">不用担心</span> — 64 位有 128TB 空间</td>
+      </tr>
+      <tr>
+        <td><strong>物理内存 / 工作集 (Working Set)</strong></td>
+        <td>实际占用的物理 RAM</td>
+        <td><span class="badge badge-ok">+几十 MB</span>（仅当前访问的页）</td>
+        <td><span class="badge badge-ok">不用担心</span></td>
+      </tr>
+      <tr>
+        <td><strong>提交大小 (Commit Size)</strong></td>
+        <td>需要页面文件或物理内存保证的私用内存</td>
+        <td><span class="badge badge-ok">几乎不变</span></td>
+        <td><span class="badge badge-ok">不用担心</span> — 文件映射不消耗 Commit</td>
+      </tr>
+    </table>
+    <div class="note">
+      <strong>关键区别：</strong><code>MapViewOfFile</code> 映射的页面由<strong>磁盘文件本身</strong>作为后备存储（Backing Store），不走页面文件（pagefile.sys）。OS 随时可以从文件读回页面内容，不需要 Commit 保证。这就是文件映射和 <code>malloc(40GB)</code> 的本质区别——
+      后者会实实在在消耗 40GB 的提交内存（需要物理 RAM + 页面文件来保证），而前者几乎不消耗提交内存。
+    </div>
+
+    <h3>五层映射架构</h3>
+    <div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;margin:16px 0;">
+      <div style="flex:1;min-width:300px;">
+        <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:4px;">
+          <div style="background:#ede9fe;border:1px solid #c4b5fd;border-radius:6px;padding:10px 14px;margin:4px;">
+            <strong>① 用户态虚拟地址空间</strong>
+            <div style="font-size:12px;color:#64748b;">进程看到的是一块连续内存（如 0x1E00000000），通过指针直接读写</div>
+          </div>
+          <div style="text-align:center;color:#8b5cf6;font-size:18px;">▼ 页表映射 (MMU)</div>
+          <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:10px 14px;margin:4px;">
+            <strong>② 页表（Page Table）</strong>
+            <div style="font-size:12px;color:#64748b;">CPU 将虚拟地址翻译为物理地址。未访问的页标记为「缺页」</div>
+          </div>
+          <div style="text-align:center;color:#8b5cf6;font-size:18px;">▼ 内存管理器</div>
+          <div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:6px;padding:10px 14px;margin:4px;">
+            <strong>③ 内存管理器（Memory Manager）</strong>
+            <div style="font-size:12px;color:#64748b;">Windows 内核管理 Section Object，将文件页面映射到物理内存</div>
+          </div>
+          <div style="text-align:center;color:#8b5cf6;font-size:18px;">▼ 缓存管理器</div>
+          <div style="background:#dcfce7;border:1px solid #86efac;border-radius:6px;padding:10px 14px;margin:4px;">
+            <strong>④ 缓存管理器（Cache Manager）</strong>
+            <div style="font-size:12px;color:#64748b;">Lazy Writer 线程每秒将脏页异步刷回磁盘</div>
+          </div>
+          <div style="text-align:center;color:#8b5cf6;font-size:18px;">▼ 后备存储</div>
+          <div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:6px;padding:10px 14px;margin:4px;">
+            <strong>⑤ 磁盘文件（Backing Store）</strong>
+            <div style="font-size:12px;color:#64748b;">NTFS 上的实际文件，物理连续的单文件</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3>缺页中断（Page Fault）</h3>
+    <p>首次访问某个映射页时，CPU 触发缺页中断 → OS 从磁盘读取该页到物理内存 → 建立页表映射 → 进程继续执行（对进程透明）。这个过程约 <strong>1~5ms</strong>，但每个页只发生一次。</p>
+    <div class="note"><strong>预触发达（Prefaulting）：</strong>如果对首次写入延迟极度敏感，可以在映射后立即 <code>memset</code> 遍历一遍映射区域，强制触发全部缺页中断。但通常不必要——写入路径上的缺页延迟远小于传统 WriteFile 的内核切换开销。</div>
+
+    <h3>Lazy Writer 异步刷盘 + 进程崩溃安全性</h3>
+    <p>修改映射内存后，对应页被标记为"脏页"，由 Windows <strong>内核态</strong>的 Lazy Writer 线程管理。脏页位于<strong>系统文件缓存（File System Cache）</strong>中，属于内核资源，不随进程退出而丢失。</p>
+    <div class="note">
+      <strong>进程崩溃 ≠ 数据丢失：</strong>应用程序 crash 后，进程的虚拟地址空间被销毁，但 Lazy Writer 仍会将脏页刷回磁盘。只有<strong>操作系统崩溃或断电</strong>才会丢失尚未刷盘的脏页。这与 WriteFile + FlushFileBuffers 面临的物理限制相同。如需更强的持久性保证，可在每次写入后调用 <code>FlushViewOfFile</code> 强制立即刷盘。
+    </div>
+  </div>
+</section>
+
+<section id="s-algorithms">
+  <h2>关键算法</h2>
+
+  <h3>初始化（首次启动 / 文件不存在）</h3>
+  <pre>Init(file_path, block_count, block_size):
+  1. metaSize = block_count × sizeof(BlockMeta)
+     totalSize = 4096 + metaSize + block_count × block_size
+  2. 创建文件并预分配（CreateFile + SetFileValidData / SetEndOfFile）
+  3. 创建文件映射对象:
+     hMapping = CreateFileMapping(hFile, NULL, PAGE_READWRITE, sizeHi, sizeLo, NULL)
+  4. 映射到虚拟地址空间:
+     mappedView = (uint8_t*)MapViewOfFile(hMapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, 0)
+     // ↑ 此后所有操作均通过 mappedView 指针！
+  5. 初始化 Header: magic / version / block_size / block_count
+  6. BlockMeta 区清零
+  7. FlushViewOfFile(mappedView, totalSize)</pre>
+
+  <h3>写入图像（核心路径）</h3>
+  <pre>WriteImage(data, size, vehicle_id):
+  前提: size ≤ block_size
+
+  1. 获取写锁 (SRWLock Exclusive)
+  2. 通过指针计算偏移（无需 Seek！）:
+     metaOffset  = 4096 + writeCursor × sizeof(BlockMeta)
+     blockOffset = 4096 + metaSize + writeCursor × blockSize
+  3. 写入图像数据:
+     memcpy(mappedView + blockOffset, data, size);        // ← 就这一行！
+  4. 写入 BlockMeta:
+     BlockMeta* meta = (BlockMeta*)(mappedView + metaOffset);
+     meta->timestamp   = GetSystemTimeAsFileTime();
+     meta->actual_size = size;
+     meta->flags       = 0x01;
+     wcscpy_s(meta->vehicle_id, 16, vehicle_id);
+     meta->data_crc32  = crc32(data, size);
+  5. 更新 Header:
+     header->write_cursor = (writeCursor + 1) % blockCount;
+     header->total_blocks_written++;
+  6. 如需确认落盘: FlushViewOfFile(mappedView + blockOffset, size)
+     // 通常不需要——OS 的 Lazy Writer 会自动刷盘
+  7. 释放写锁</pre>
+
+  <h3>读取图像</h3>
+  <pre>ReadByIndex(blockIndex):
+  1. 获取读锁 (SRWLock Shared)
+  2. BlockMeta* meta = (BlockMeta*)(mappedView + 4096) + blockIndex;
+  3. if (meta->flags != 0x01) return 空;
+  4. uint64_t blockOffset = 4096 + metaSize + blockIndex × block_size;
+  5. 校验 CRC32(mappedView + blockOffset, meta->actual_size) == meta->data_crc32
+  6. 拷贝返回: memcpy(outBuffer, mappedView + blockOffset, meta->actual_size);
+  7. 释放读锁</pre>
+
+  <h3>按车辆 ID 检索</h3>
+  <pre>ReadByVehicle(vehicle_id):
+  1. 获取读锁 (SRWLock Shared)
+  2. BlockMeta* metas = (BlockMeta*)(mappedView + 4096);
+  3. 遍历 metas[0..N-1]，匹配 vehicle_id → 记录匹配的 blockIndex
+  4. 对每个匹配项调用 ReadByIndex 读取图像数据
+  5. 释放读锁</pre>
+
+  <h3>环形覆盖语义</h3>
+  <p>当 <code>write_cursor</code> 绕回时，该位置原有的 BlockMeta.flags 非零说明有旧数据，直接覆盖即可——无需显式删除。通过 <code>header->total_blocks_written</code> 判断数据新旧：数字越大越新。</p>
+</section>
+
+<section id="s-concurrency">
+  <h2>并发模型</h2>
+  <table>
+    <tr><th>角色</th><th>操作</th><th>频率</th><th>并发策略</th></tr>
+    <tr><td>相机采集线程</td><td>memcpy 写入图像</td><td>每车一次（高频）</td><td>独占写锁 (SRWLock Exclusive)</td></tr>
+    <tr><td>UI 显示线程</td><td>读取最新图像</td><td>按需（中频）</td><td>共享读锁 (SRWLock Shared)</td></tr>
+    <tr><td>分析/回放线程</td><td>按车辆 ID 读取</td><td>按需（低频）</td><td>共享读锁 (SRWLock Shared)</td></tr>
+  </table>
+  <div class="note">
+    <strong>注意：memcpy 不保证原子性。</strong>虽然写入路径没有系统调用，但多个线程同时 memcpy 到不同 Block 仍可能产生竞争（Header 的 write_cursor 更新不是原子的）。仍需用 SRWLock 保护写操作。读操作可以并发（Shared Lock）。
+  </div>
+</section>
+
+<section id="s-recovery">
+  <h2>异常恢复</h2>
+  <div class="note">
+    <strong>内存映射的崩溃优势：</strong>脏页由 OS 内核管理，<strong>进程崩溃后 Lazy Writer 仍会将已 memcpy 的数据刷回磁盘</strong>（脏页在系统文件缓存中，不随进程销毁）。只有断电或 OS 崩溃才会丢失未刷盘数据——即便 WriteFile 方案也面临同样限制。实际恢复时，只需扫描 BlockMeta 区即可重建完整状态。
+  </div>
+  <table>
+    <tr><th>崩溃时机</th><th>后果</th><th>恢复方式</th></tr>
+    <tr><td>memcpy 途中</td><td>当前 Block 数据不完整</td><td>CRC 校验失败 → 标记该 Block 为 Empty，下个写入覆盖</td></tr>
+    <tr><td>写完数据、写 BlockMeta 前</td><td>数据完整但无元数据</td><td>扫描 BlockMeta 发现 flags=Empty，该 Block 可被覆盖</td></tr>
+    <tr><td>写完 BlockMeta、更新 Header 前</td><td>write_cursor 未更新</td><td>扫描 BlockMeta 找到最后 Valid 块+1，重建 write_cursor</td></tr>
+  </table>
+  <h3>恢复流程（每次启动执行）</h3>
+  <pre>Recover(file_path):
+  1. 打开文件，创建映射
+  2. 验证 Header magic 和 CRC32
+  3. 遍历 BlockMeta 区所有条目:
+     → 找到最后一个 flags=Valid 的条目 → 重建 write_cursor
+  4. 对所有声称 Valid 的条目校验 data_crc32:
+     → CRC 不匹配 → 标记 flags=Empty, actual_size=0
+  5. 写回修正后的 Header
+  6. FlushViewOfFile</pre>
+  <div class="note"><strong>恢复性能优势：</strong>BlockMeta 集中存放于文件前部，恢复时<strong>连续顺序读取</strong>即可获得全部元数据，无需像方案一那样在 Block 间隙中跳跃扫描。对于 10,000 个 Block，扫描仅需读取 640KB 连续内存。</div>
+</section>
+
+<section id="s-windows">
+  <h2>Windows 平台实现要点</h2>
+
+  <h3>预分配方式</h3>
+  <table>
+    <tr><th>方法</th><th>API</th><th>速度</th><th>要求</th></tr>
+    <tr><td>SetFileValidData</td><td><code>SetFileValidData</code></td><td>瞬时</td><td>需 SE_MANAGE_VOLUME_NAME 特权</td></tr>
+    <tr><td>SetEndOfFile + 写零</td><td><code>SetFilePointerEx</code> + <code>WriteFile</code></td><td>慢（写满全文件）</td><td>无</td></tr>
+  </table>
+  <p>推荐：先尝试 <code>SetFileValidData</code>，失败回退到分块写零（64MB Overlapped I/O）。</p>
+
+  <h3>内存映射 API 链</h3>
+  <pre>// 1. 创建文件映射对象（内核 Section Object）
+HANDLE hMapping = CreateFileMappingW(hFile, NULL, PAGE_READWRITE, 0, totalSize, NULL);
+
+// 2. 映射到进程地址空间 — 整个文件！
+uint8_t* view = (uint8_t*)MapViewOfFile(hMapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, 0);
+
+// 3. 之后所有操作都通过 view 指针，无需任何文件 API
+memcpy(view + offset, data, size);  // 写入
+
+// 4. 可选：强制刷盘
+FlushViewOfFile(view + offset, size);    // 刷指定区域
+FlushFileBuffers(hFile);                  // 刷整个文件</pre>
+
+  <h3>64 位 vs 32 位</h3>
+  <table>
+    <tr><th></th><th>64 位进程</th><th>32 位进程</th></tr>
+    <tr><td>虚拟地址空间</td><td><span class="badge badge-ok">128TB</span></td><td><span class="badge badge-warn">2~4GB</span></td></tr>
+    <tr><td>映射 2TB 文件</td><td><span class="badge badge-ok">一次映射</span></td><td><span class="badge badge-warn">需分段映射（Sliding Window）</span></td></tr>
+    <tr><td>推荐</td><td colspan="2">强烈推荐使用 64 位编译。分段映射显著增加复杂度。</td></tr>
+  </table>
+
+  <h3>分段映射策略（仅 32 位需要）</h3>
+  <pre>const uint64_t WINDOW_SIZE = 256 * 1024 * 1024;  // 256MB 窗口
+uint64_t blockOffset = HEADER_SIZE + metaSize + writeCursor * blockSize;
+uint64_t windowBase = (blockOffset / WINDOW_SIZE) * WINDOW_SIZE;
+
+UnmapViewOfFile(mappedView);
+mappedView = (uint8_t*)MapViewOfFile(hMapping,
+    FILE_MAP_READ | FILE_MAP_WRITE,
+    (DWORD)(windowBase >> 32), (DWORD)(windowBase & 0xFFFFFFFF), WINDOW_SIZE);
+// 此后 mappedView[0] 对应文件的 windowBase 偏移
+// 写入: memcpy(mappedView + (blockOffset - windowBase), data, size);</pre>
+
+  <h3>防碎片验证</h3>
+  <pre>1. GetDiskFreeSpaceEx → 确认有足够连续空闲空间
+2. FSCTL_GET_RETRIEVAL_POINTERS → 验证分配后的物理连续性
+3. extent=1 完美；2~3 可接受；≥4 触发 FSCTL_MOVE_FILE</pre>
+</section>
+
+<section id="s-config">
+  <h2>配置参数设计</h2>
+  <table>
+    <tr><th>参数</th><th>计算方式</th><th>示例值</th></tr>
+    <tr><td><code>block_size</code></td><td>MaxImageSize × 1.2 → 对齐到 4KB</td><td>4,194,304 (4MB)</td></tr>
+    <tr><td><code>block_count</code></td><td>AvailableDiskSpace / block_size × 保留比例</td><td>10,000</td></tr>
+    <tr><td>元数据区大小</td><td>block_count × 64</td><td>640KB (10000 × 64B)</td></tr>
+    <tr><td>总文件大小</td><td>4KB + metaSize + block_count × block_size</td><td>~40GB</td></tr>
+  </table>
+  <p>磁盘 100GB → 80GB 可用 → block_count = 80GB / 4MB = <strong>20,000 块</strong>（存储最近 20,000 辆车的图像）</p>
+</section>
+
+<section id="s-integration">
+  <h2>系统集成</h2>
+  <pre>┌──────────────────────────────────────────────┐
+│                 应用层 (Application)          │
+│  ┌─────────────┐ ┌──────────┐ ┌───────────┐ │
+│  │ 相机采集模块 │ │ UI展示   │ │ 分析模块  │ │
+│  └──────┬──────┘ └────┬─────┘ └─────┬─────┘ │
+├─────────┼─────────────┼─────────────┼───────┤
+│         ▼             ▼             ▼       │
+│  ┌──────────────────────────────────────┐   │
+│  │     MMapRingBuffer (存储抽象层)       │   │
+│  │     所有操作通过 mappedView 指针      │   │
+│  └────────────────┬─────────────────────┘   │
+│  ┌────────────────▼─────────────────────┐   │
+│  │  Win32 Memory-Mapped File API        │   │
+│  │  CreateFileMapping / MapViewOfFile   │   │
+│  └────────────────┬─────────────────────┘   │
+│  ┌────────────────▼─────────────────────┐   │
+│  │  NTFS 单文件 (物理连续)               │   │
+│  └──────────────────────────────────────┘   │
+└──────────────────────────────────────────────┘</pre>
+  <p>与现有系统的接口简洁：启动时 <code>Init</code>，来车时 <code>Write</code>（内部仅一次 memcpy），检索时 <code>ReadByVehicle</code>，关闭时 <code>Shutdown</code>。原有应用只需 5 行代码集成。</p>
+</section>
+
+<section id="s-comparison">
+  <h2>优缺点与对比</h2>
+  <h3>独特优点</h3>
+  <table>
+    <tr><td>⚡ 零系统调用写入</td><td>memcpy 替代 WriteFile，无用户态↔内核态切换，性能极致</td></tr>
+    <tr><td>⚡ 极简代码</td><td>写入仅需一行 memcpy + Header/BlockMeta 更新（指针操作）</td></tr>
+    <tr><td>⚡ OS 自动回写</td><td>Lazy Writer 线程异步刷脏页，无需手动 Flush（关键节点可选）</td></tr>
+    <tr><td>⚡ 读写统一模型</td><td>读/写均通过指针，无需 Seek，无需 ReadFile/WriteFile</td></tr>
+    <tr><td>⚡ 变长存储</td><td>每 Block 可存储 ≤ blockSize 的任意大小，空间利用率 ~99%</td></tr>
+    <tr><td>⚡ BlockMeta 集中</td><td>崩溃恢复顺序读取文件前部即可，无需跳跃扫描</td></tr>
+  </table>
+
+  <h3>独特缺点</h3>
+  <table>
+    <tr><td>⚠ 32 位受限</td><td>虚拟地址空间 2~4GB，需分段映射（增加复杂度）</td></tr>
+    <tr><td>⚠ 缺页中断延迟</td><td>首次访问新页触发 Page Fault（可预触发达避免）</td></tr>
+    <tr><td>⚠ 刷盘时机不确定</td><td>OS 决定何时回写，断电可能丢失未刷数据（可调 FlushViewOfFile 频率）</td></tr>
+    <tr><td>⚠ 不兼容 FILE_FLAG_NO_BUFFERING</td><td>内存映射与无缓冲 I/O 互斥，无法绕过系统缓存</td></tr>
+  </table>
+
+  <h3>与替代方案对比</h3>
+  <table>
+    <tr><th>维度</th><th>本方案（内存映射）</th><th>WriteFile 环形缓冲</th><th>传统（多文件）</th></tr>
+    <tr><td>磁盘碎片</td><td><span class="stars">★★★★★</span> 零碎片</td><td><span class="stars">★★★★★</span> 零碎片</td><td><span class="stars">★☆☆☆☆</span> 极易碎片</td></tr>
+    <tr><td>写入性能</td><td><span class="stars">★★★★★</span> memcpy O(1)</td><td><span class="stars">★★★★☆</span> WriteFile O(1)</td><td><span class="stars">★★☆☆☆</span> 文件创建开销</td></tr>
+    <tr><td>内核切换</td><td><span class="stars">★★★★★</span> 0 次</td><td><span class="stars">★★★☆☆</span> ~4 次/写</td><td><span class="stars">★☆☆☆☆</span> 多次</td></tr>
+    <tr><td>空间利用率</td><td><span class="stars">★★★★★</span> ~99%</td><td><span class="stars">★★★☆☆</span> ~70%</td><td><span class="stars">★★★★★</span> ~99%</td></tr>
+    <tr><td>崩溃恢复</td><td><span class="stars">★★★★☆</span> BlockMeta 扫描</td><td><span class="stars">★★★★☆</span> Index 扫描</td><td><span class="stars">★★☆☆☆</span> 需单独处理</td></tr>
+    <tr><td>32 位兼容</td><td><span class="stars">★★☆☆☆</span> 需分段映射</td><td><span class="stars">★★★★★</span> 完全兼容</td><td><span class="stars">★★★★★</span> 完全兼容</td></tr>
+    <tr><td>推荐场景</td><td><span class="badge badge-purple">64 位生产环境</td><td>32 位 / 合规审计</td><td>不推荐</td></tr>
+  </table>
+</section>
+
+<!-- ══════════════ C++ 组件库接口 ══════════════ -->
+<section id="s-api-types">
+  <h2>公共类型定义</h2>
+  <pre>// MMapRingBufferTypes.h
+#pragma once
+#include &lt;cstdint&gt;
+
+struct MMapRingBufferConfig {
+    wchar_t  drive_letter;           // 磁盘盘符，如 L'D'
+    uint32_t block_size;             // 每个 Block 最大字节数 (例: 4MB = 4194304)
+    uint32_t block_count;            // Block 总数量 (例: 10000)
+    uint32_t max_extents_accepted;   // 可接受的最大 extent 数量 (默认 3)
+    bool     use_mapping;            // true = 内存映射, false = WriteFile 回退
+};
+
+struct ImageInfo {
+    uint64_t timestamp;         // FILETIME 写入时间
+    uint32_t block_index;       // Block 索引
+    uint32_t actual_size;       // 图像实际字节数
+    wchar_t  vehicle_id[16];    // 车辆标识
+    uint8_t* data;              // 图像数据（组件分配，调用方 FreeImage 释放）
+};
+
+struct RingBufferStats {
+    uint32_t block_size, block_count;
+    uint32_t used_blocks, free_blocks;
+    uint32_t write_cursor;
+    uint64_t total_blocks_written, total_bytes_written;
+    uint64_t total_file_size, mapped_size;
+    bool     is_mapped;            // 是否使用内存映射
+    bool     is_healthy;
+    uint32_t extent_count;         // 文件物理 extent 数量
+    bool     is_contiguous;        // 是否完全连续
+    uint64_t largest_free_extent;
+};
+
+// 错误码
+#define MMRBF_OK                 0
+#define MMRBF_ERR_WIN32          1
+#define MMRBF_ERR_INVALID_PARAM  2
+#define MMRBF_ERR_IMAGE_TOO_LARGE 3
+#define MMRBF_ERR_FILE_CORRUPT   4
+#define MMRBF_ERR_DISK_FULL      5
+#define MMRBF_ERR_NOT_INITIALIZED 6
+#define MMRBF_ERR_NOT_FOUND      7
+#define MMRBF_ERR_DEFRAG_FAILED  8
+#define MMRBF_ERR_TOO_FRAGMENTED 9
+#define MMRBF_ERR_ALREADY_LOCKED 10
+#define MMRBF_ERR_MAP_FAILED     11   // MapViewOfFile 失败
+#define MMRBF_ERR_32BIT_LIMIT    12   // 32 位进程文件过大，需分段映射</pre>
+</section>
+
+<section id="s-api-class">
+  <h2>MMapRingBuffer 接口</h2>
+  <pre>// MMapRingBuffer.h
+#pragma once
+#include "MMapRingBufferTypes.h"
+#include &lt;memory&gt;
+
+class MMapRingBuffer {
+public:
+    // ═══ 生命周期 ═══
+    MMapRingBuffer();
+    ~MMapRingBuffer();                          // 自动调用 Shutdown()
+    // 禁止拷贝和移动
+    MMapRingBuffer(const MMapRingBuffer&) = delete;
+    MMapRingBuffer& operator=(const MMapRingBuffer&) = delete;
+    MMapRingBuffer(MMapRingBuffer&&) = delete;
+    MMapRingBuffer& operator=(MMapRingBuffer&&) = delete;
+
+    // ═══ 初始化与关闭 ═══
+    /// @brief 初始化环形缓冲区组件
+    /// @param cfg  配置参数（盘符 / block大小 / block个数 / 连续性阈值）
+    /// @return MMRBF_OK 成功，其他为错误码
+    /// @note  组件在指定盘符根目录自动创建数据文件
+    ///        启动流程：分析空闲空间 → 预分配 → 验证物理连续性 → 内存映射 → 独占锁定
+    ///        映射成功后，所有读写直接通过指针，无需任何文件 API
+    ///        HDD 典型耗时：40GB 预分配约 2~3 分钟，映射瞬时完成
+    uint32_t Init(const MMapRingBufferConfig& cfg);
+
+    /// @brief 关闭环形缓冲区，解除映射，释放文件锁，确保数据落盘
+    /// @note  析构函数自动调用。关闭后可再次 Init 重新初始化
+    void Shutdown();
+
+    // ═══ 写入 ═══
+    /// @brief 写入一张图像（内部仅一次 memcpy + 元数据更新）
+    /// @param data       图像数据指针
+    /// @param size       图像字节数 (≤ block_size)
+    /// @param vehicle_id 车辆标识（可选，最多 15 个宽字符）
+    /// @param out_index  输出：写入的 Block 索引（可选）
+    /// @return MMRBF_OK 成功
+    uint32_t Write(const void*    data,
+                   uint32_t       size,
+                   const wchar_t* vehicle_id = nullptr,
+                   uint32_t*      out_index = nullptr);
+
+    // ═══ 读取 ═══
+    /// @brief 按 Block 索引读取图像
+    uint32_t ReadByIndex(uint32_t  block_index,
+                         void*     buffer,
+                         uint32_t  buffer_size,
+                         uint32_t* out_actual_size);
+
+    /// @brief 按车辆 ID 检索图像（返回匹配数量）
+    int32_t  ReadByVehicle(const wchar_t* vehicle_id,
+                           ImageInfo*     results,
+                           int32_t        max_results);
+
+    /// @brief 读取最近 N 张图像
+    int32_t  ReadLatest(int32_t    count,
+                        ImageInfo* results,
+                        int32_t    max_results);
+
+    // ═══ 统计与工具 ═══
+    void     GetStats(RingBufferStats* out_stats) const;
+    static void      FreeImage(ImageInfo* image);
+
+    /// @brief 强制刷盘（调用 FlushViewOfFile）
+    void     Flush();
+
+    /// @brief 验证文件完整性（Header CRC + BlockMeta CRC 扫描）
+    static bool      ValidateFile(const wchar_t* file_path);
+
+    /// @brief 计算预分配文件总大小
+    static uint64_t  CalculateFileSize(uint32_t block_size, uint32_t block_count);
+
+    /// @brief 获取映射指针（高级用户直接操作，慎用）
+    /// @note  返回 mappedView 指针，调用方可直接 memcpy 读写
+    ///        使用前必须持有锁（GetWriteLock / GetReadLock）
+    uint8_t* GetMappedView();
+
+private:
+    class Impl;
+    std::unique_ptr&lt;Impl&gt; impl_;
+};</pre>
+</section>
+
+<section id="s-api-usage">
+  <h2>使用示例</h2>
+  <pre>// ═══ 应用启动 ═══
+MMapRingBuffer storage;
+MMapRingBufferConfig cfg = {};
+cfg.drive_letter         = L'D';
+cfg.block_size           = 4 * 1024 * 1024;   // 4MB per block
+cfg.block_count          = 10000;             // 10000 blocks ≈ 40GB
+cfg.max_extents_accepted = 3;
+cfg.use_mapping          = true;              // 启用内存映射
+
+uint32_t err = storage.Init(cfg);
+if (err != MMRBF_OK) {
+    // MMRBF_ERR_TOO_FRAGMENTED → HDD 碎片严重，需手动整理
+    // MMRBF_ERR_ALREADY_LOCKED  → 已有实例在运行
+    // MMRBF_ERR_MAP_FAILED      → 映射失败（32位超大文件等）
+    return err;
+}
+
+// ═══ 采集线程：来车写入 ═══
+void OnVehicleArrive(const uint8_t* imageData, uint32_t size, const wchar_t* plate) {
+    uint32_t idx = 0;
+    uint32_t err = storage.Write(imageData, size, plate, &idx);
+    // ↑ 内部仅一次 memcpy + 元数据更新，0 次内核切换
+    if (err == MMRBF_OK) {
+        // 写入成功，idx 为 Block 索引
+    }
+}
+
+// ═══ UI 线程：查看最新图像 ═══
+ImageInfo latest[10];
+int count = storage.ReadLatest(10, latest, 10);
+for (int i = 0; i &lt; count; i++) {
+    DisplayImage(latest[i].data, latest[i].actual_size);
+    storage.FreeImage(&latest[i]);  // 释放组件分配的内存
+}
+
+// ═══ 检索线程：按车牌查询 ═══
+ImageInfo results[100];
+int n = storage.ReadByVehicle(L"京A12345", results, 100);
+// 遍历 results，使用后逐个 FreeImage
+
+// ═══ 应用退出 ═══
+storage.Shutdown();  // 解除映射 + 刷盘 + 释放锁
+// 或让析构函数自动处理</pre>
+</section>
+
+<section id="s-api-checklist">
+  <h2>接口确认清单</h2>
+  <table>
+    <tr><th>功能</th><th>接口</th><th>状态</th></tr>
+    <tr><td>初始化（含启动整理）</td><td><code>Init(cfg)</code></td><td><span class="badge badge-ok">已设计</span></td></tr>
+    <tr><td>关闭</td><td><code>Shutdown()</code></td><td><span class="badge badge-ok">已设计</span></td></tr>
+    <tr><td>写入图像</td><td><code>Write(data, size, vehicle_id)</code></td><td><span class="badge badge-ok">已设计</span></td></tr>
+    <tr><td>按索引读取</td><td><code>ReadByIndex(idx, buf, size)</code></td><td><span class="badge badge-ok">已设计</span></td></tr>
+    <tr><td>按车辆 ID 检索</td><td><code>ReadByVehicle(id, results, max)</code></td><td><span class="badge badge-ok">已设计</span></td></tr>
+    <tr><td>读取最新 N 张</td><td><code>ReadLatest(count, results, max)</code></td><td><span class="badge badge-ok">已设计</span></td></tr>
+    <tr><td>统计信息</td><td><code>GetStats(out)</code></td><td><span class="badge badge-ok">已设计</span></td></tr>
+    <tr><td>强制刷盘</td><td><code>Flush()</code></td><td><span class="badge badge-ok">已设计</span></td></tr>
+    <tr><td>文件验证</td><td><code>ValidateFile(path)</code></td><td><span class="badge badge-ok">已设计</span></td></tr>
+    <tr><td>释放图像内存</td><td><code>FreeImage(info)</code></td><td><span class="badge badge-ok">已设计</span></td></tr>
+    <tr><td>获取映射指针</td><td><code>GetMappedView()</code></td><td><span class="badge badge-ok">已设计</span></td></tr>
+    <tr><td>计算文件大小</td><td><code>CalculateFileSize()</code></td><td><span class="badge badge-ok">已设计</span></td></tr>
+  </table>
+</section>
+
+</main>
+
+<!-- ═══════════════ 动画脚本 ═══════════════ -->
+<script>
+// ========== 碎片演示 ==========
+const fragSim = {
+  blocks: [], BLOCK_COUNT: 60,
+  init() {
+    this.blocks = [];
+    for (let i = 0; i < this.BLOCK_COUNT; i++) this.blocks.push({ free: true, id: 0 });
+    this.nextId = 1;
+    this.render();
+  },
+  addRandom() {
+    const size = 1 + Math.floor(Math.random() * 4);
+    for (let i = 0; i <= this.BLOCK_COUNT - size; i++) {
+      let ok = true;
+      for (let j = 0; j < size; j++) { if (!this.blocks[i+j].free) { ok = false; break; } }
+      if (ok) {
+        for (let j = 0; j < size; j++) { this.blocks[i+j].free = false; this.blocks[i+j].id = this.nextId; }
+        this.nextId++;
+        this.render();
+        return;
+      }
+    }
+    alert('没有连续空间了！新文件被"撕碎"到多个位置 → 这就是磁盘碎片！');
+    let remaining = size;
+    for (let i = 0; i < this.BLOCK_COUNT && remaining > 0; i++) {
+      if (this.blocks[i].free) {
+        this.blocks[i].free = false; this.blocks[i].id = this.nextId; remaining--;
+      }
+    }
+    this.nextId++;
+    this.render();
+  },
+  deleteRandom() {
+    const used = this.blocks.filter(b => !b.free);
+    if (used.length === 0) return;
+    const targetId = used[Math.floor(Math.random() * used.length)].id;
+    for (let b of this.blocks) { if (b.id === targetId) { b.free = true; b.id = 0; } }
+    this.render();
+  },
+  reset() { this.init(); },
+  render() {
+    const grid = document.getElementById('grid-frag');
+    const info = document.getElementById('frag-info');
+    const used = this.blocks.filter(b => !b.free).length;
+    let fragments = 0;
+    for (let i = 1; i < this.BLOCK_COUNT; i++) {
+      if (this.blocks[i-1].free !== this.blocks[i].free) fragments++;
+    }
+    let html = '';
+    for (let i = 0; i < this.BLOCK_COUNT; i++) {
+      const b = this.blocks[i];
+      let cls = b.free ? 'empty' : 'used';
+      let label = b.free ? '' : b.id;
+      if (!b.free && b.id > 0) {
+        let contiguous = true;
+        let first = -1;
+        for (let j = 0; j < this.BLOCK_COUNT; j++) {
+          if (this.blocks[j].id === b.id) {
+            if (first < 0) first = j;
+            else if (j !== first + 1 && this.blocks[j-1].id !== b.id) contiguous = false;
+          }
+        }
+        if (!contiguous) cls = 'fragmented';
+      }
+      html += `<div class="disk-block ${cls}" style="height:${b.free ? 20 : 20 + (b.id % 5) * 6}px" title="${b.free ? '空闲' : '文件#' + b.id}">${label}</div>`;
+    }
+    grid.innerHTML = html;
+    info.textContent = `已用 ${used}/${this.BLOCK_COUNT} 块 · 碎片间隙 ${fragments} 处 · 利用率 ${Math.round(used/this.BLOCK_COUNT*100)}%`;
+  }
+};
+
+// ========== 环形缓冲区演示 ==========
+const ringSim = {
+  BLOCK_COUNT: 40, writePos: 0, totalWritten: 0, blocks: [],
+  init() {
+    this.blocks = [];
+    for (let i = 0; i < this.BLOCK_COUNT; i++) this.blocks.push({ written: false, overwritten: false, totalNum: 0 });
+    this.writePos = 0; this.totalWritten = 0;
+    this.draw();
+  },
+  writeImage() {
+    const prev = this.blocks[this.writePos];
+    const wasOccupied = prev.written;
+    this.totalWritten++;
+    this.blocks[this.writePos] = { written: true, overwritten: wasOccupied, totalNum: this.totalWritten };
+    this.writePos = (this.writePos + 1) % this.BLOCK_COUNT;
+    this.draw();
+    setTimeout(() => {
+      for (let b of this.blocks) b.overwritten = false;
+      this.draw();
+    }, 600);
+  },
+  writeBatch(n) { for (let i = 0; i < n; i++) this.writeImage(); },
+  reset() { this.init(); },
+  draw() {
+    const canvas = document.getElementById('ring-canvas');
+    if (!canvas) return;
+    const w = canvas.clientWidth;
+    if (w > 0) canvas.width = w;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = 320;
+    const cols = 10, rows = Math.ceil(this.BLOCK_COUNT / cols);
+    const cellW = (W - 80) / cols, cellH = 20;
+    const startX = 40, startY = 40;
+
+    ctx.clearRect(0, 0, W, H);
+    ctx.font = '12px -apple-system, "Microsoft YaHei", sans-serif';
+
+    for (let i = 0; i < this.BLOCK_COUNT; i++) {
+      const col = i % cols, row = Math.floor(i / cols);
+      const x = startX + col * (cellW + 2), y = startY + row * (cellH + 6);
+      const b = this.blocks[i];
+
+      ctx.fillStyle = !b.written ? '#e2e8f0' : (b.overwritten ? '#f59e0b' : '#8b5cf6');
+      ctx.strokeStyle = !b.written ? '#cbd5e1' : (b.overwritten ? '#b45309' : '#6d28d9');
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(x, y, cellW, cellH, 3); ctx.fill(); ctx.stroke();
+
+      if (this.writePos === i) {
+        ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.roundRect(x-2, y-2, cellW+4, cellH+4, 5); ctx.stroke();
+      }
+
+      if (b.written) {
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+        ctx.fillText(b.totalNum, x + cellW/2, y + cellH/2 + 3);
+      }
+    }
+
+    const legendY = startY + rows * (cellH + 6) + 20;
+    ctx.fillStyle = '#475569'; ctx.font = '12px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(`写入指针: Block #${this.writePos}  |  已写: ${this.totalWritten} 张  |  方式: memcpy（零内核切换）`, startX, legendY);
+
+    const used = this.blocks.filter(b => b.written).length;
+    const pct = Math.round(used / this.BLOCK_COUNT * 100);
+    document.getElementById('ring-info').textContent =
+      `第 ${this.totalWritten} 次 memcpy → Block #${(this.writePos - 1 + this.BLOCK_COUNT) % this.BLOCK_COUNT}  |  填充 ${pct}%  |  系统调用: 0 次`;
+  }
+};
+
+// ========== 文件布局演示（两区布局） ==========
+function drawLayout() {
+  const canvas = document.getElementById('layout-canvas');
+  if (!canvas) return;
+  const w = canvas.clientWidth;
+  if (w > 0) canvas.width = w;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = 180;
+  ctx.clearRect(0, 0, W, H);
+
+  const headerW = 50, metaW = 80, y = 30, h = 80;
+  const blockAreaW = W - 100 - headerW - metaW;
+
+  // Header
+  ctx.fillStyle = '#0f172a'; ctx.fillRect(20, y, headerW, h);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('Header', 20 + headerW/2, y + h/2 - 5);
+  ctx.fillText('4KB', 20 + headerW/2, y + h/2 + 15);
+
+  // BlockMeta area
+  const metaX = 20 + headerW + 6;
+  ctx.fillStyle = '#ede9fe'; ctx.fillRect(metaX, y, metaW, h);
+  ctx.strokeStyle = '#8b5cf6'; ctx.lineWidth = 1;
+  for (let i = 0; i < 6; i++) {
+    ctx.strokeRect(metaX, y + i * (h/6), metaW, h/6);
+  }
+  ctx.fillStyle = '#6b21a8'; ctx.textAlign = 'center';
+  ctx.fillText('BlockMeta', metaX + metaW/2, y + h/2 - 5);
+  ctx.fillText('N×64B', metaX + metaW/2, y + h/2 + 15);
+
+  // Block area
+  const blockX = metaX + metaW + 6;
+  const blockW = blockAreaW;
+  ctx.fillStyle = '#dcfce7'; ctx.fillRect(blockX, y, blockW, h);
+  ctx.strokeStyle = '#10b981'; ctx.lineWidth = 1;
+  for (let i = 0; i < 8; i++) {
+    ctx.strokeRect(blockX + i * (blockW / 8), y, (blockW / 8) * (0.6 + Math.random() * 0.4), h);
+  }
+  ctx.fillStyle = '#166534'; ctx.textAlign = 'center';
+  ctx.fillText('Block 区 (变长)', blockX + blockW/2, y + h/2 - 5);
+  ctx.fillText('每块 ≤ 4MB，实际 ~2MB', blockX + blockW/2, y + h/2 + 15);
+
+  ctx.fillStyle = '#64748b'; ctx.font = '11px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText('↑ 两区布局：BlockMeta 集中在前部，崩溃恢复时顺序读 640KB 即可获得全部元数据', 20, y + h + 30);
+  ctx.fillText('↑ memcpy 写入：mappedView[blockOffset] 直接写，无需 Seek 和 WriteFile', 20, y + h + 48);
+}
+setTimeout(drawLayout, 100);
+
+// ========== 零拷贝对比演示 ==========
+function drawZeroCopy() {
+  const canvas = document.getElementById('zerocopy-canvas');
+  if (!canvas) return;
+  const w = canvas.clientWidth;
+  if (w > 0) canvas.width = w;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = 260;
+  ctx.clearRect(0, 0, W, H);
+
+  // Left: WriteFile path
+  const leftX = 30, rightX = W/2 + 20;
+  const boxes = [
+    { x: leftX + 60, y: 20, w: 100, h: 36, label: '用户缓冲区', color: '#fecaca', textColor: '#991b1b' },
+    { x: leftX + 60, y: 72, w: 100, h: 36, label: '内核缓冲区', color: '#fed7aa', textColor: '#9a3412' },
+    { x: leftX + 60, y: 124, w: 100, h: 36, label: '磁盘缓存', color: '#fde68a', textColor: '#92400e' },
+    { x: leftX + 60, y: 176, w: 100, h: 36, label: '磁盘', color: '#e2e8f0', textColor: '#475569' },
+  ];
+  // Right: memcpy path
+  const rboxes = [
+    { x: rightX + 60, y: 20, w: 100, h: 36, label: '用户缓冲区', color: '#bbf7d0', textColor: '#166534' },
+    { x: rightX + 60, y: 90, w: 100, h: 36, label: '映射内存\n(=磁盘缓存)', color: '#86efac', textColor: '#166534' },
+    { x: rightX + 60, y: 160, w: 100, h: 36, label: '磁盘', color: '#e2e8f0', textColor: '#475569' },
+  ];
+
+  // Draw WriteFile path
+  ctx.fillStyle = '#ef4444'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('WriteFile 路径', leftX + 110, 16);
+  boxes.forEach(b => {
+    ctx.fillStyle = b.color; ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 6); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = b.textColor; ctx.font = '11px sans-serif';
+    const lines = b.label.split('\n');
+    lines.forEach((l, i) => ctx.fillText(l, b.x + b.w/2, b.y + b.h/2 + (i - (lines.length-1)/2) * 14));
+  });
+  // Arrows for WriteFile
+  ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2;
+  for (let i = 0; i < 3; i++) {
+    const fromY = boxes[i].y + boxes[i].h;
+    const toY = boxes[i+1].y;
+    ctx.beginPath(); ctx.moveTo(boxes[i].x + boxes[i].w/2, fromY); ctx.lineTo(boxes[i].x + boxes[i].w/2, toY);
+    ctx.stroke();
+    ctx.fillStyle = '#ef4444'; ctx.beginPath();
+    ctx.moveTo(boxes[i].x + boxes[i].w/2, toY); ctx.lineTo(boxes[i].x + boxes[i].w/2 - 5, toY - 8); ctx.lineTo(boxes[i].x + boxes[i].w/2 + 5, toY - 8); ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = '#991b1b'; ctx.font = 'bold 10px sans-serif';
+  ctx.fillText('内核态切换', leftX + 20, 50);
+  ctx.fillText('拷贝①', boxes[0].x + boxes[0].w + 12, boxes[0].y + boxes[0].h/2);
+  ctx.fillText('拷贝②', boxes[1].x + boxes[1].w + 12, boxes[1].y + boxes[1].h/2);
+
+  // Draw memcpy path
+  ctx.fillStyle = '#10b981'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('memcpy 路径 (零拷贝)', rightX + 110, 16);
+  rboxes.forEach(b => {
+    ctx.fillStyle = b.color; ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 6); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = b.textColor; ctx.font = '11px sans-serif';
+    const lines = b.label.split('\n');
+    lines.forEach((l, i) => ctx.fillText(l, b.x + b.w/2, b.y + b.h/2 + (i - (lines.length-1)/2) * 14));
+  });
+  // Arrow for memcpy
+  ctx.strokeStyle = '#10b981'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(rboxes[0].x + rboxes[0].w/2, rboxes[0].y + rboxes[0].h);
+  ctx.lineTo(rboxes[0].x + rboxes[0].w/2, rboxes[1].y);
+  ctx.stroke();
+  ctx.fillStyle = '#10b981'; ctx.beginPath();
+  ctx.moveTo(rboxes[0].x + rboxes[0].w/2, rboxes[1].y);
+  ctx.lineTo(rboxes[0].x + rboxes[0].w/2 - 5, rboxes[1].y - 8);
+  ctx.lineTo(rboxes[0].x + rboxes[0].w/2 + 5, rboxes[1].y - 8); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#166534'; ctx.font = 'bold 10px sans-serif';
+  ctx.fillText('仅 1 次 memcpy', rboxes[0].x + rboxes[0].w + 12, rboxes[0].y + rboxes[0].h/2);
+  ctx.fillText('零内核切换', rboxes[0].x + rboxes[0].w + 12, rboxes[0].y + rboxes[0].h/2 + 14);
+
+  // OS async flush arrow
+  ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(rboxes[1].x + rboxes[1].w/2, rboxes[1].y + rboxes[1].h);
+  ctx.lineTo(rboxes[1].x + rboxes[1].w/2, rboxes[2].y);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#64748b'; ctx.font = '10px sans-serif';
+  ctx.fillText('OS 异步刷盘', rboxes[1].x + rboxes[1].w + 12, rboxes[1].y + rboxes[1].h/2 + 6);
+}
+
+// ========== 虚拟内存演示 ==========
+function drawVMem() {
+  const canvas = document.getElementById('vmem-canvas');
+  if (!canvas) return;
+  const w = canvas.clientWidth;
+  if (w > 0) canvas.width = w;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = 280;
+  ctx.clearRect(0, 0, W, H);
+
+  // Virtual address space (large)
+  ctx.fillStyle = '#1e293b'; ctx.beginPath(); ctx.roundRect(30, 30, W - 60, 50, 6); ctx.fill();
+  ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText('虚拟地址空间 (128TB on x64)', 40, 52);
+
+  // Show a few pages mapped
+  const pages = [
+    { x: 60, label: 'Header', color: '#8b5cf6' },
+    { x: 120, label: 'Meta', color: '#8b5cf6' },
+    { x: 200, label: 'Block[0]', color: '#f59e0b', dirty: true },
+    { x: 260, label: 'Block[50]', color: '#f59e0b', dirty: true },
+    { x: 380, label: '未访问', color: '#475569' },
+    { x: 430, label: '未访问', color: '#475569' },
+    { x: 500, label: '未访问', color: '#475569' },
+    { x: 550, label: '未访问', color: '#475569' },
+    { x: 620, label: '未访问', color: '#475569' },
+  ];
+  pages.forEach(p => {
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.roundRect(p.x, 38, 40, 34, 3); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(p.label, p.x + 20, 58);
+    if (p.dirty) {
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 7px sans-serif';
+      ctx.fillText('脏', p.x + 20, 48);
+    }
+  });
+
+  // Physical RAM (small)
+  ctx.fillStyle = '#0f172a'; ctx.beginPath(); ctx.roundRect(30, 110, 300, 50, 6); ctx.fill();
+  ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText('物理内存 (16GB RAM)', 40, 132);
+
+  // Show only active pages in RAM
+  const ramPages = [
+    { x: 60, label: 'Header', color: '#8b5cf6' },
+    { x: 110, label: 'Meta', color: '#8b5cf6' },
+    { x: 170, label: 'Block[0]', color: '#f59e0b' },
+    { x: 220, label: 'Block[50]', color: '#f59e0b' },
+  ];
+  ramPages.forEach(p => {
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.roundRect(p.x, 118, 40, 34, 3); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = '8px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(p.label, p.x + 20, 138);
+  });
+  ctx.fillStyle = '#334155'; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText('... 其余 99.9% 映射区域不在物理内存中', 280, 138);
+
+  // Arrow from virtual to physical
+  ctx.strokeStyle = '#8b5cf6'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+  ctx.beginPath(); ctx.moveTo(80, 78); ctx.lineTo(80, 110); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(200, 78); ctx.lineTo(190, 110); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Disk
+  ctx.fillStyle = '#334155'; ctx.beginPath(); ctx.roundRect(30, 190, W - 60, 50, 6); ctx.fill();
+  ctx.fillStyle = '#94a3b8'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText('磁盘文件 (Backing Store)', 40, 212);
+  ctx.fillStyle = '#64748b'; ctx.font = '11px sans-serif';
+  ctx.fillText('所有数据最终存储在这里。物理连续的 NTFS 单文件，头尾固定不变。', 40, 230);
+
+  // Note
+  ctx.fillStyle = '#64748b'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('关键结论：MapViewOfFile 映射的是虚拟地址空间，不是物理 RAM。物理内存仅按需分配。', W/2, 265);
+}
+
+// ========== 启动整理演示 ==========
+const defragSim = {
+  totalExtents: 40, extents: [], ourFileExtents: 1,
+  init() {
+    this.extents = [];
+    let pos = 0;
+    for (let i = 0; i < this.totalExtents; i++) {
+      const isFree = Math.random() < 0.35;
+      const size = 1 + Math.floor(Math.random() * 4);
+      this.extents.push({ free: isFree, size: size, id: isFree ? 0 : (100 + i), fragmented: !isFree && Math.random() < 0.6 });
+      pos += size;
+    }
+    this.ourFileExtents = 1 + Math.floor(Math.random() * 6);
+    this.render();
+    document.getElementById('defrag-info').textContent = '磁盘当前碎片化状态，点击按钮模拟启动整理';
+  },
+  run() {
+    const info = document.getElementById('defrag-info');
+    const step1 = document.getElementById('defrag-step1');
+    const step2 = document.getElementById('defrag-step2');
+    const step3 = document.getElementById('defrag-step3');
+    const info1 = document.getElementById('defrag-info-1');
+    const info2 = document.getElementById('defrag-info-2');
+    const info3 = document.getElementById('defrag-info-3');
+
+    [step1, step2, step3].forEach(s => { s.style.borderColor = '#e2e8f0'; s.style.background = '#f8fafc'; });
+    info1.textContent = ''; info2.textContent = ''; info3.textContent = '';
+
+    step1.style.borderColor = '#8b5cf6'; step1.style.background = '#f5f3ff';
+    info1.innerHTML = '正在扫描...';
+    info.textContent = '① 分析空闲位图中...';
+    setTimeout(() => {
+      const freeExtents = this.extents.filter(e => e.free);
+      const largest = freeExtents.reduce((max, e) => Math.max(max, e.size), 0);
+      info1.innerHTML = '最大连续空闲: ' + largest + ' 块<br>' + (largest >= 10 ? '✅ 空间够用' : '⚠ 空间不足');
+      info.textContent = '① 完成 → ② 预分配文件中...';
+
+      step2.style.borderColor = '#8b5cf6'; step2.style.background = '#f5f3ff';
+      info2.innerHTML = '预分配中...';
+      setTimeout(() => {
+        let allocated = 0;
+        const needed = 10;
+        for (let i = 0; i < this.extents.length && allocated < needed; i++) {
+          if (this.extents[i].free) {
+            this.extents[i].free = false; this.extents[i].id = 999; this.extents[i].fragmented = false;
+            allocated += this.extents[i].size;
+          }
+        }
+        this.render();
+
+        if (this.ourFileExtents <= 3) {
+          info2.innerHTML = 'extent 数: ' + this.ourFileExtents + ' ✅ 连续';
+          info.textContent = '② 验证通过 → ③ 锁定 + 映射...';
+        } else {
+          info2.innerHTML = 'extent 数: ' + this.ourFileExtents + ' ⚠ 需整理';
+          info.textContent = '② 碎片超标 → 触发 FSCTL_MOVE_FILE...';
+          setTimeout(() => {
+            this.ourFileExtents = 1;
+            info2.innerHTML = 'extent 数: 1 ✅ 已整理';
+            info.textContent = '整理完成 → ③ 锁定 + 映射...';
+            this.render();
+            setTimeout(phase3, 600);
+          }, 800);
+          return;
+        }
+        setTimeout(phase3, 600);
+        function phase3() {
+          step3.style.borderColor = '#10b981'; step3.style.background = '#f0fdf4';
+          info3.innerHTML = '✅ 独占锁 + 内存映射<br>MapViewOfFile 完成';
+          info.textContent = '✅ 启动完成 — 文件映射就绪，memcpy 即可写入';
+        }
+      }, 500);
+    }, 400);
+  },
+  reset() { this.init(); },
+  render() {
+    const container = document.getElementById('defrag-disk-viz');
+    let html = '';
+    for (let e of this.extents) {
+      let bg = '#e2e8f0';
+      if (!e.free) bg = e.id === 999 ? '#8b5cf6' : (e.fragmented ? '#ef4444' : '#94a3b8');
+      html += '<div style="width:' + (e.size * 12 + 2) + 'px;height:24px;background:' + bg + ';border-radius:2px;font-size:8px;color:#fff;text-align:center;line-height:24px;margin:1px;" title="' + (e.free ? '空闲' : (e.id === 999 ? '环形文件' : '文件#' + e.id)) + '">' + (e.free ? '' : (e.id === 999 ? '◆' : '·')) + '</div>';
+    }
+    container.innerHTML = html;
+  }
+};
+
+// ========== 初始化所有 ==========
+fragSim.init();
+ringSim.init();
+defragSim.init();
+setTimeout(drawZeroCopy, 150);
+setTimeout(drawVMem, 200);
+window.addEventListener('resize', () => { ringSim.draw(); drawLayout(); drawZeroCopy(); drawVMem(); });
+
+// ========== 平滑滚动 + 导航高亮 ==========
+document.querySelectorAll('nav a').forEach(a => {
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    const id = a.getAttribute('href').substring(1);
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.querySelectorAll('nav a').forEach(x => x.classList.remove('active'));
+    a.classList.add('active');
+  });
+});
+
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
+      const link = document.querySelector(`nav a[href="#${entry.target.id}"]`);
+      if (link) link.classList.add('active');
+    }
+  });
+}, { rootMargin: '-20% 0px -70% 0px' });
+document.querySelectorAll('section[id]').forEach(s => observer.observe(s));
+</script>
+</body>
+</html>
