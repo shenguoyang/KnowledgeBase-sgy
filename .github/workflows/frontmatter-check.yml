@@ -1,0 +1,50 @@
+name: Frontmatter Check
+
+on:
+  push:
+    paths:
+      - '**.md'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for missing frontmatter
+        run: |
+          echo "### Files missing frontmatter (no --- block at start):"
+          echo ""
+          missing=0
+          for f in $(find . -name "*.md" -not -path "./.git/*" -not -path "./.claude/*" -not -path "./模板/*" -not -path "./scripts/*"); do
+            first_line=$(head -1 "$f")
+            if [ "$first_line" != "---" ]; then
+              echo "  - $f"
+              missing=$((missing + 1))
+            fi
+          done
+          echo ""
+          echo "Total files missing frontmatter: $missing"
+          if [ "$missing" -gt 0 ]; then
+            echo "::warning::$missing file(s) missing frontmatter"
+          fi
+
+      - name: Check for missing tags
+        run: |
+          echo "### Files with frontmatter but missing 'tags' field:"
+          echo ""
+          missing_tags=0
+          for f in $(find . -name "*.md" -not -path "./.git/*" -not -path "./.claude/*" -not -path "./模板/*" -not -path "./scripts/*"); do
+            if head -1 "$f" | grep -q "^---$"; then
+              if ! head -30 "$f" | grep -q "^tags:"; then
+                echo "  - $f"
+                missing_tags=$((missing_tags + 1))
+              fi
+            fi
+          done
+          echo ""
+          echo "Total files missing tags: $missing_tags"
+          if [ "$missing_tags" -gt 0 ]; then
+            echo "::warning::$missing_tags file(s) have frontmatter but no tags"
+          fi

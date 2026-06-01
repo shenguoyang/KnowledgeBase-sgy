@@ -1,8 +1,11 @@
 # Claude Code 配置
 .claude/
 
-# Obsidian 配置
+# Obsidian 设备相关配置（不同设备不同步）
 .obsidian/
+
+# 维护脚本
+scripts/
 
 # Git 自身目录
 .git/

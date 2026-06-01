@@ -1,3 +1,10 @@
+---
+tags:
+  - seed
+created: 2026-05-30
+updated: 2026-05-30
+topic: ai
+---
 
 
 **手机热点共享vpn**

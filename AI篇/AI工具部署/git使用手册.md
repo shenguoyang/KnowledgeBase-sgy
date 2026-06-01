@@ -1,3 +1,13 @@
+---
+tags:
+  - seed
+  - project
+  - guide
+created: 2026-05-30
+updated: 2026-05-30
+topic: ai
+---
+
 # Git 使用手册
 
 ## 1. Git 简介

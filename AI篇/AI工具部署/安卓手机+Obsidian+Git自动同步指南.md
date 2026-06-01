@@ -1,3 +1,13 @@
+---
+tags:
+  - seed
+  - project
+  - guide
+created: 2026-05-30
+updated: 2026-05-30
+topic: ai
+---
+
 # 安卓手机 + Obsidian + Git 自动同步指南
 
 ## 1. 概述
@@ -23,104 +33,6 @@ PC 端：开始工作前 git pull → 编辑 → git push
 | Obsidian Git 内置         | ✅ 但不稳定    | ⭐⭐      | ⭐ 易崩溃 | ❌ 不推荐 |
 
 > **建议**：90% 的用户直接选 **方案一（Git Sync）**，开箱即用。追求极致可靠再上方案二。
-
----
-
-## 3. 方案一：Git Sync 插件（⭐ 推荐首选）
-
-Git Sync 是一个全图形化的安卓 Git 客户端，专门为 Obsidian 同步设计。
-
-### 3.1 安装 Git Sync
-
-从 Google Play 或 GitHub 安装 **Git Sync** 应用。
-
-### 3.2 配置 SSH 认证
-
-**步骤一：生成 SSH Key**
-
-1. 打开 Git Sync → 点击左侧 **Authentication**
-2. 选择 **SSH Authentication**
-3. 点击 **Generate Key** 生成密钥对
-4. **复制公钥（Public Key）** 到剪贴板
-
-**步骤二：添加公钥到 GitHub**
-
-1. 浏览器打开 GitHub → 右上角头像 → **Settings**
-2. 左侧菜单 → **SSH and GPG keys** → **New SSH key**
-3. Title 填写 `Android Phone`（方便识别）
-4. Key 粘贴刚才复制的公钥
-5. 点击 **Add SSH key**
-
-**步骤三：导入私钥**
-
-回到 Git Sync，将 Private Key 填入对应栏，点击 **Import**。认证状态应显示 ✓。
-
-### 3.3 创建 GitHub Token（用于 Obsidian 插件）
-
-1. GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
-2. 点击 **Generate new token (classic)**
-3. Note 填写 `Obsidian Sync`，过期时间选 **No expiration**
-4. 勾选 **repo** 权限（完整的仓库读写权限）
-5. 点击 **Generate token**，**立即复制保存**（离开页面后无法再查看）
-
-> ⚠️ Token 只出现一次，务必妥善保存！
-
-### 3.4 Clone 仓库到手机
-
-1. Git Sync 点击 **仓库图标**（Cloud 图标）
-2. 从列表中选择你的仓库
-3. 选择本地存储路径（建议在手机根目录新建 `ObsidianVault` 文件夹）
-4. 授权存储权限后开始 Clone
-
-### 3.5 配置 .gitignore
-
-在 Git Sync 中点击 ⚙️ 设置 → .GITIGNORE，添加：
-
-```gitignore
-# Obsidian 工作区配置（设备不同，避免冲突）
-.obsidian/workspace.json
-.obsidian/workspace-mobile.json
-.obsidian/plugins/obsidian-git/data.json
-
-# 冲突文件
-conflict-files-obsidian-git.md
-
-# 垃圾箱
-.trash/
-
-# Claude Code 配置
-.claude/
-
-# 系统文件
-.DS_Store
-Thumbs.db
-```
-
-### 3.6 配置 .gitattributes（避免 Markdown 冲突）
-
-在仓库根目录创建 `.gitattributes`：
-
-```
-*.md merge=union
-```
-
-`merge=union` 表示 Markdown 文件冲突时自动合并双方内容，避免手动解决冲突。
-
-### 3.7 打开 Obsidian Vault
-
-1. 安装 **Obsidian**（Google Play 搜索下载）
-2. 打开 Obsidian → **Open folder as vault**
-3. 导航到 Git Sync Clone 的本地路径
-4. 选择文件夹，Vault 加载完成
-
-### 3.8 设置自动同步
-
-在 Git Sync 中配置自动同步策略：
-
-- **打开 Obsidian 时**：自动 `git pull` 拉取最新
-- **关闭 Obsidian 时**：自动 `git add . && git commit && git push` 推送
-
-这样每次你在 Obsidian 中编辑完退出后，笔记就自动同步到 GitHub 了。
 
 ---
 

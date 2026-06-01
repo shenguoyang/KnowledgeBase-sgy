@@ -1,0 +1,21 @@
+name: Link Check
+
+on:
+  schedule:
+    - cron: '37 8 * * 1'  # Every Monday at 8:37am (off-peak minute)
+  workflow_dispatch:       # Manual trigger
+
+jobs:
+  check-links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check external links
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: 'yes'
+          use-verbose-mode: 'yes'
+          config-file: '.github/link-check-config.json'
+          folder-path: '.'
+          max-depth: 5

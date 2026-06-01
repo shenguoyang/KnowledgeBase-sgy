@@ -1,0 +1,33 @@
+name: CDN Image Report
+
+on:
+  schedule:
+    - cron: '37 9 * * 1'  # Every Monday at 9:37am
+  workflow_dispatch:
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Count remaining CDN image references
+        run: |
+          echo "## Yuque CDN Image References"
+          echo ""
+          count=$(grep -r "cdn\.nlark\.com" --include="*.md" . 2>/dev/null | wc -l)
+          echo "Total CDN references remaining: $count"
+          echo ""
+
+          if [ "$count" -gt 0 ]; then
+            echo "### Files with CDN references:"
+            echo ""
+            grep -rl "cdn\.nlark\.com" --include="*.md" . 2>/dev/null | while read f; do
+              n=$(grep -c "cdn\.nlark\.com" "$f")
+              echo "  - $f ($n references)"
+            done
+            echo ""
+            echo "::warning::$count CDN image references still present"
+          else
+            echo "All CDN images have been localized."
+          fi
