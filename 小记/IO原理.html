@@ -277,6 +277,136 @@
   @media (min-width: 769px) {
     .sidebar-toggle { display:none; }
   }
+
+  /* ═══════════ EDIT MODE ═══════════ */
+  .edit-toolbar {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 1000;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 12px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    transition: all 0.2s;
+  }
+  .edit-toolbar button {
+    display: flex; align-items: center; gap: 5px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.82em;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.18s;
+    white-space: nowrap;
+  }
+  .edit-toolbar button:hover { border-color: var(--accent); }
+  .edit-toolbar .edit-btn {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .edit-toolbar .edit-btn:hover {
+    background: var(--accent);
+    color: #fff;
+  }
+  .edit-toolbar .save-btn {
+    background: var(--green);
+    border-color: var(--green);
+    color: #fff;
+    display: none;
+  }
+  .edit-toolbar .save-btn:hover { opacity: 0.85; }
+  .edit-toolbar .cancel-btn {
+    background: var(--red);
+    border-color: var(--red);
+    color: #fff;
+    display: none;
+  }
+  .edit-toolbar .cancel-btn:hover { opacity: 0.85; }
+  .edit-toolbar .download-btn {
+    border-color: var(--orange);
+    color: var(--orange);
+    display: none;
+  }
+  .edit-toolbar .download-btn:hover {
+    background: var(--orange);
+    color: #fff;
+  }
+
+  /* Editing state */
+  .edit-toolbar.editing .edit-btn { display: none; }
+  .edit-toolbar.editing .save-btn,
+  .edit-toolbar.editing .cancel-btn,
+  .edit-toolbar.editing .download-btn { display: flex; }
+
+  .main-content.editing {
+    outline: 2px dashed var(--accent);
+    outline-offset: -2px;
+  }
+  .main-content.editing .section {
+    position: relative;
+    border: 1px dashed transparent;
+    border-radius: 8px;
+    padding: 20px 22px 42px;
+    transition: border-color 0.2s;
+  }
+  .main-content.editing .section:hover {
+    border-color: rgba(88,166,255,0.3);
+    background: rgba(88,166,255,0.015);
+  }
+  .main-content.editing .section::after {
+    content: '✏️ 可编辑区域';
+    position: absolute;
+    bottom: 8px;
+    right: 14px;
+    font-size: 0.7em;
+    color: var(--dim);
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+  }
+  .main-content.editing .section:hover::after {
+    opacity: 0.6;
+  }
+  .main-content.editing .hero {
+    border: 1px dashed transparent;
+    border-radius: 8px;
+    transition: border-color 0.2s;
+  }
+  .main-content.editing .hero:hover {
+    border-color: rgba(88,166,255,0.3);
+  }
+  .edit-toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1001;
+    background: var(--green);
+    color: #fff;
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-size: 0.85em;
+    font-family: inherit;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    animation: toastIn 0.3s ease, toastOut 0.3s ease 1.7s forwards;
+    pointer-events: none;
+  }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+  @keyframes toastOut {
+    from { opacity: 1; transform: translateX(-50%) translateY(0); }
+    to   { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  }
 </style>
 </head>
 <body>
@@ -318,6 +448,23 @@
 
 <!-- ═══════════════ MAIN CONTENT ═══════════════ -->
 <main class="main-content">
+
+<!-- ═══════════════ EDIT TOOLBAR ═══════════════ -->
+<div class="edit-toolbar" id="editToolbar">
+  <button class="edit-btn" onclick="toggleEditMode()" title="进入编辑模式">
+    ✏️ 编辑
+  </button>
+  <button class="save-btn" onclick="saveEdit()" title="保存修改">
+    💾 保存
+  </button>
+  <button class="cancel-btn" onclick="cancelEdit()" title="取消编辑">
+    ✖ 取消
+  </button>
+  <button class="download-btn" onclick="downloadHTML()" title="下载修改后的HTML文件">
+    📥 下载
+  </button>
+</div>
+
 <div class="hero">
   <h1>Windows <span>IO 原理</span> 全景解析</h1>
   <p>从用户态 write() 到磁盘物理扇区 —— 完整数据路径与关键数据结构</p>
@@ -1854,6 +2001,137 @@ drawOverview();
 showFlowSub('write');
 showNTFS('arch');
 showDiskInit('mbr');
+
+// ═══════════════════════════════════════════
+//  EDIT MODE
+// ═══════════════════════════════════════════
+let isEditing = false;
+let originalHTML = '';
+const STORAGE_KEY = 'io-principle-html-saved';
+
+function toggleEditMode() {
+  if (!isEditing) {
+    enterEditMode();
+  }
+}
+
+function enterEditMode() {
+  isEditing = true;
+  const toolbar = document.getElementById('editToolbar');
+  const mainContent = document.querySelector('.main-content');
+
+  // Save original HTML for cancel
+  originalHTML = mainContent.innerHTML;
+
+  // Make all sections contenteditable
+  mainContent.classList.add('editing');
+  document.querySelectorAll('.main-content .section, .main-content .hero').forEach(el => {
+    el.setAttribute('contenteditable', 'true');
+  });
+
+  toolbar.classList.add('editing');
+  showToast('✏️ 编辑模式已开启 — 可直接点击修改内容');
+}
+
+function saveEdit() {
+  if (!isEditing) return;
+
+  isEditing = false;
+  const toolbar = document.getElementById('editToolbar');
+  const mainContent = document.querySelector('.main-content');
+
+  // Remove contenteditable
+  mainContent.classList.remove('editing');
+  document.querySelectorAll('.main-content [contenteditable="true"]').forEach(el => {
+    el.removeAttribute('contenteditable');
+  });
+
+  toolbar.classList.remove('editing');
+
+  // Save to localStorage
+  try {
+    localStorage.setItem(STORAGE_KEY, mainContent.innerHTML);
+    showToast('✅ 修改已保存到本地存储');
+  } catch(e) {
+    showToast('⚠️ 保存失败: ' + e.message);
+  }
+}
+
+function cancelEdit() {
+  if (!isEditing) return;
+  if (!confirm('确定要取消编辑吗？未保存的修改将丢失。')) return;
+
+  isEditing = false;
+  const toolbar = document.getElementById('editToolbar');
+  const mainContent = document.querySelector('.main-content');
+
+  // Restore original HTML
+  mainContent.innerHTML = originalHTML;
+  mainContent.classList.remove('editing');
+
+  toolbar.classList.remove('editing');
+  showToast('↩️ 已还原到编辑前的内容');
+}
+
+function downloadHTML() {
+  // Get current document HTML with edits
+  const mainContent = document.querySelector('.main-content');
+  const docClone = document.documentElement.cloneNode(true);
+  const cloneMain = docClone.querySelector('.main-content');
+  if (cloneMain) {
+    cloneMain.innerHTML = mainContent.innerHTML;
+    cloneMain.classList.remove('editing');
+  }
+  // Remove edit toolbar from clone
+  const cloneToolbar = docClone.querySelector('.edit-toolbar');
+  if (cloneToolbar) cloneToolbar.remove();
+
+  // Remove contenteditable attributes
+  docClone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+
+  const htmlContent = '<!DOCTYPE html>\n' + docClone.outerHTML;
+  const blob = new Blob([htmlContent], {type: 'text/html;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'IO原理_已编辑.html';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('📥 HTML 文件已下载');
+}
+
+function showToast(msg) {
+  // Remove existing toast
+  const existing = document.querySelector('.edit-toast');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.className = 'edit-toast';
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+
+  // Auto remove after animation
+  setTimeout(() => {
+    if (toast.parentNode) toast.remove();
+  }, 2200);
+}
+
+// Load saved content from localStorage on page load
+(function loadSavedContent() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const mainContent = document.querySelector('.main-content');
+      if (mainContent && saved.trim()) {
+        mainContent.innerHTML = saved;
+      }
+    }
+  } catch(e) {
+    // Silently ignore if localStorage is unavailable
+  }
+})();
 </script>
 </body>
 </html>
