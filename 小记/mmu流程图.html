@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MMU 虚拟地址 → 物理地址 转换全流程</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --text-dim: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --orange: #d2991d;
+  --red: #f85149;
+  --purple: #a371f7;
+  --cyan: #39d2c0;
+  --pink: #db61a2;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  padding: 0;
+}
+
+/* Hero */
+.hero {
+  background: linear-gradient(135deg, #0d1117 0%, #161b22 50%, #1a1f35 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 40px 20px;
+  text-align: center;
+}
+.hero h1 {
+  font-size: 2.2em;
+  background: linear-gradient(135deg, #58a6ff, #a371f7);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 8px;
+}
+.hero .sub {
+  color: var(--text-dim);
+  font-size: 1.05em;
+}
+
+/* Main container */
+.container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 30px 20px;
+}
+
+/* Overview diagram - horizontal pipeline */
+.pipeline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0;
+  margin: 30px 0 50px;
+  padding: 30px 15px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow-x: auto;
+}
+.pipeline .stage {
+  background: #1c2333;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  text-align: center;
+  min-width: 110px;
+  transition: all .25s;
+  position: relative;
+}
+.pipeline .stage:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 20px rgba(88,166,255,0.15);
+  transform: translateY(-2px);
+}
+.pipeline .stage .icon { font-size: 1.8em; margin-bottom: 4px; }
+.pipeline .stage .label { font-weight: 700; font-size: 0.95em; }
+.pipeline .stage .sub  { font-size: 0.75em; color: var(--text-dim); }
+.pipeline .arrow {
+  font-size: 1.5em;
+  color: var(--accent);
+  margin: 0 6px;
+  flex-shrink: 0;
+}
+.pipeline .arrow-wide {
+  font-size: 1.5em;
+  color: var(--text-dim);
+  margin: 0 2px;
+}
+
+/* Section title */
+.section-title {
+  font-size: 1.4em;
+  font-weight: 700;
+  margin: 50px 0 20px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.section-title .num {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px; height: 36px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 0.85em;
+  font-weight: 800;
+}
+
+/* Step detail card */
+.step-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+.step-card .step-header {
+  padding: 16px 22px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.step-card .step-header:hover { background: #1c2333; }
+.step-card .step-dot {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.step-card .step-title { font-weight: 700; font-size: 1.1em; }
+.step-card .step-tag {
+  font-size: 0.75em;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-weight: 600;
+}
+.step-card .step-body {
+  padding: 0 22px 22px 48px;
+  display: none;
+}
+.step-card.open .step-body { display: block; }
+.step-card.open .step-header { border-bottom: 1px solid var(--border); }
+
+/* Address visualizer */
+.addr-vis {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.95em;
+  margin: 14px 0;
+  flex-wrap: wrap;
+}
+.addr-vis .seg {
+  padding: 10px 16px;
+  text-align: center;
+  font-weight: 600;
+}
+.addr-vis .seg-title {
+  font-size: 0.7em;
+  color: var(--text-dim);
+  display: block;
+  margin-bottom: 2px;
+}
+.addr-vis .bits {
+  font-size: 0.68em;
+  color: var(--text-dim);
+}
+.addr-sep {
+  color: var(--text-dim);
+  font-size: 0.9em;
+  margin: 0 2px;
+}
+
+/* Color boxes */
+.bg-blue   { background: #1a3a5c; border: 1px solid #58a6ff; border-radius: 8px; }
+.bg-purple { background: #2d1f4e; border: 1px solid #a371f7; border-radius: 8px; }
+.bg-green  { background: #153329; border: 1px solid #3fb950; border-radius: 8px; }
+.bg-orange { background: #3d2e12; border: 1px solid #d2991d; border-radius: 8px; }
+.bg-pink   { background: #3d1a30; border: 1px solid #db61a2; border-radius: 8px; }
+.bg-cyan   { background: #143d38; border: 1px solid #39d2c0; border-radius: 8px; }
+
+/* Table style */
+.info-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 14px 0;
+  font-size: 0.92em;
+}
+.info-table th {
+  background: #1c2333;
+  padding: 10px 14px;
+  text-align: left;
+  font-weight: 600;
+  border-bottom: 2px solid var(--border);
+  color: var(--accent);
+}
+.info-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.info-table tr:hover td { background: #1c2333; }
+.info-table .mono { font-family: 'Cascadia Code', 'Consolas', monospace; }
+
+/* Code block */
+.code-block {
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+  font-size: 0.88em;
+  overflow-x: auto;
+  margin: 12px 0;
+  line-height: 1.8;
+}
+.code-block .k { color: #ff7b72; }
+.code-block .n { color: #a5d6ff; }
+.code-block .c { color: #8b949e; font-style: italic; }
+.code-block .v { color: #79c0ff; }
+.code-block .s { color: #a5d6ff; }
+
+/* TLB diagram */
+.tlb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px,1fr));
+  gap: 8px;
+  margin: 14px 0;
+}
+.tlb-entry {
+  background: #1c2333;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+  font-size: 0.85em;
+}
+.tlb-entry .vpn  { color: var(--purple); font-weight: 600; font-family: monospace; }
+.tlb-entry .ppn  { color: var(--green); font-weight: 600; font-family: monospace; }
+.tlb-entry .flags { font-size: 0.75em; color: var(--text-dim); }
+
+/* Tree diagram */
+.tree {
+  margin: 14px 0;
+  font-family: monospace;
+  font-size: 0.9em;
+  line-height: 1.6;
+}
+.tree .node  { color: var(--accent); }
+.tree .ptr   { color: var(--purple); }
+.tree .data  { color: var(--green); }
+.tree .label { color: var(--text-dim); font-size: 0.85em; }
+
+/* Badge */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.73em;
+  font-weight: 600;
+}
+.badge-fast  { background: #153329; color: var(--green); }
+.badge-slow  { background: #3d2e12; color: var(--orange); }
+.badge-error { background: #3d1a1a; color: var(--red); }
+
+/* Note box */
+.note {
+  background: #1a2332;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  padding: 14px 18px;
+  margin: 16px 0;
+  font-size: 0.92em;
+}
+
+/* Animated highlight */
+@keyframes pulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(88,166,255,0.4); }
+  50%     { box-shadow: 0 0 0 8px rgba(88,166,255,0); }
+}
+.highlight-pulse {
+  animation: pulse 2s infinite;
+  border-color: var(--accent) !important;
+}
+
+/* ── Edit Toolbar ── */
+.edit-toolbar {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 9999;
+  display: flex;
+  gap: 8px;
+}
+.edit-toolbar button {
+  padding: 10px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .2s;
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.edit-toolbar button:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 12px rgba(88,166,255,0.2);
+}
+.edit-toolbar .btn-edit   { color: var(--accent); }
+.edit-toolbar .btn-cancel { color: var(--orange); display: none; }
+.edit-toolbar .btn-save   { color: var(--green); display: none; }
+.edit-toolbar .btn-add    { color: var(--purple); display: none; }
+
+/* Edit mode visuals */
+body.editing .step-body,
+body.editing .step-title,
+body.editing .section-title,
+body.editing .hero h1,
+body.editing .hero .sub,
+body.editing .container > h2 {
+  outline: 2px dashed rgba(88,166,255,0.35);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+body.editing .step-body {
+  display: block !important;
+}
+body.editing .edit-toolbar .btn-edit   { display: none; }
+body.editing .edit-toolbar .btn-cancel,
+body.editing .edit-toolbar .btn-save,
+body.editing .edit-toolbar .btn-add    { display: flex; }
+body.editing .step-header { pointer-events: none; }
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--green);
+  color: #fff;
+  padding: 12px 28px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 0.92em;
+  z-index: 10000;
+  opacity: 0;
+  transition: opacity .3s;
+  pointer-events: none;
+}
+.toast.show { opacity: 1; }
+
+/* Responsive */
+@media (max-width: 768px) {
+  .pipeline { flex-direction: column; }
+  .pipeline .arrow { transform: rotate(90deg); }
+  .addr-vis { font-size: 0.78em; }
+}
+</style>
+</head>
+<body>
+
+<!-- ====== EDIT TOOLBAR ====== -->
+<div class="edit-toolbar">
+  <button class="btn-edit" onclick="enterEditMode()" title="编辑模式">✏️ 编辑</button>
+  <button class="btn-cancel" onclick="cancelEdit()" title="取消编辑">↩ 取消</button>
+  <button class="btn-save" onclick="saveHTML()" title="保存修改">💾 保存</button>
+  <button class="btn-add"  onclick="addStep()" title="添加新步骤">➕ 新步骤</button>
+</div>
+<div class="toast" id="toast"></div>
+
+<!-- ====== HERO ====== -->
+<div class="hero">
+  <h1 data-edit-id="hero-title">MMU 虚拟地址 → 物理地址 转换全流程</h1>
+  <p class="sub" data-edit-id="hero-sub">以 x86-64 4级页表为例 · Core i7 风格 MMU · 逐步骤详解</p>
+</div>
+
+<div class="container">
+
+<!-- ====== 总览流水线 ====== -->
+<h2 style="margin-bottom:8px;" data-edit-id="overview-h2">总览：一条地址转换的完整路径</h2>
+<div class="pipeline">
+  <div class="stage highlight-pulse">
+    <div class="icon">🧠</div>
+    <div class="label">CPU</div>
+    <div class="sub">发出虚拟地址</div>
+  </div>
+  <span class="arrow">→</span>
+  <div class="stage">
+    <div class="icon">✂️</div>
+    <div class="label">MMU 拆解</div>
+    <div class="sub">VPN + VPO</div>
+  </div>
+  <span class="arrow">→</span>
+  <div class="stage">
+    <div class="icon">⚡</div>
+    <div class="label">TLB</div>
+    <div class="sub">快表查询</div>
+  </div>
+  <span class="arrow arrow-wide">→</span>
+  <div class="stage" style="border-style:dashed;">
+    <div class="icon">📖</div>
+    <div class="label">页表遍历</div>
+    <div class="sub">4级逐级查</div>
+  </div>
+  <span class="arrow arrow-wide">→</span>
+  <div class="stage" style="border-style:dashed;">
+    <div class="icon">❌</div>
+    <div class="label">缺页异常?</div>
+    <div class="sub">Page Fault</div>
+  </div>
+  <span class="arrow">→</span>
+  <div class="stage">
+    <div class="icon">🔗</div>
+    <div class="label">组物理地址</div>
+    <div class="sub">PPN + PPO</div>
+  </div>
+  <span class="arrow">→</span>
+  <div class="stage">
+    <div class="icon">💾</div>
+    <div class="label">Cache/内存</div>
+    <div class="sub">读写数据</div>
+  </div>
+</div>
+
+<!-- ================================================================================= -->
+<!-- STEP 1 -->
+<!-- ================================================================================= -->
+<div class="section-title" data-edit-id="section-title-1"><span class="num">1</span> CPU 发出虚拟地址 (Virtual Address)</div>
+<div class="step-card open">
+  <div class="step-header" onclick="this.parentElement.classList.toggle('open')">
+    <div class="step-dot" style="background:var(--accent);"></div>
+    <div class="step-title">CPU 执行指令，生成 48 位虚拟地址</div>
+    <span class="step-tag" style="color:var(--accent);background:#1a3a5c;">触发源</span>
+  </div>
+  <div class="step-body" data-edit-id="step-body-1">
+    <p>当 CPU 执行 <code>mov rax, [0x7f8a3c00b000]</code> 时，该虚拟地址被送入 MMU。</p>
+
+    <div class="addr-vis">
+      <div class="seg bg-blue" style="flex:2;">
+        <span class="seg-title">虚拟地址 (48-bit)</span>
+        0x0000<span style="color:#58a6ff;">7f8a3c00b</span><span style="color:#3fb950;">000</span>
+      </div>
+    </div>
+
+    <table class="info-table">
+      <tr><th>字段</th><th>说明</th><th>本例值</th></tr>
+      <tr>
+        <td class="mono">VPN (Virtual Page Number)</td>
+        <td>虚拟页号，用于索引页表</td>
+        <td class="mono" style="color:var(--accent);">0x7f8a3c00b (36 bits)</td>
+      </tr>
+      <tr>
+        <td class="mono">VPO (Virtual Page Offset)</td>
+        <td>页内偏移，直接复制到物理地址</td>
+        <td class="mono" style="color:var(--green);">0x000 (12 bits)</td>
+      </tr>
+    </table>
+
+    <div class="note">
+      <strong>关键认知：</strong> 虚拟地址 = VPN + VPO。VPN 负责找到物理页框，VPO 是页内具体位置。<br>
+      4KB 页 → VPO 占 12 位 (2¹² = 4096)。VPN 占剩余 36 位。
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================================= -->
+<!-- STEP 2 -->
+<!-- ================================================================================= -->
+<div class="section-title" data-edit-id="section-title-2"><span class="num">2</span> MMU 拆分虚拟地址为四级索引</div>
+<div class="step-card open">
+  <div class="step-header" onclick="this.parentElement.classList.toggle('open')">
+    <div class="step-dot" style="background:var(--purple);"></div>
+    <div class="step-title">将 36 位 VPN 拆成 4 个 9 位索引，每级 512 项</div>
+    <span class="step-tag" style="color:var(--purple);background:#2d1f4e;">地址拆解</span>
+  </div>
+  <div class="step-body" data-edit-id="step-body-2">
+    <p>在 x86-64 4级页表中，MMU 把 36 位 VPN 等分为 4 段，每段 9 位（2⁹ = 512 项），逐级索引。</p>
+
+    <!-- 虚拟地址拆解可视化 -->
+    <div class="addr-vis" style="font-size:0.85em;">
+      <div class="seg bg-purple">
+        <span class="seg-title">PM L4 索引</span>
+        VL4<br><span class="bits">bits 47:39 (9位)</span>
+      </div>
+      <span class="addr-sep">+</span>
+      <div class="seg bg-purple">
+        <span class="seg-title">PM L3 索引</span>
+        VL3<br><span class="bits">bits 38:30 (9位)</span>
+      </div>
+      <span class="addr-sep">+</span>
+      <div class="seg bg-purple">
+        <span class="seg-title">PM L2 索引</span>
+        VL2<br><span class="bits">bits 29:21 (9位)</span>
+      </div>
+      <span class="addr-sep">+</span>
+      <div class="seg bg-purple">
+        <span class="seg-title">PM L1 索引</span>
+        VL1<br><span class="bits">bits 20:12 (9位)</span>
+      </div>
+      <span class="addr-sep">+</span>
+      <div class="seg bg-green">
+        <span class="seg-title">页内偏移</span>
+        VPO<br><span class="bits">bits 11:0 (12位)</span>
+      </div>
+    </div>
+
+    <div class="note">
+      <strong>为什么 4 级？</strong> 4 级 × 每级 512 项 = 可管理 256TB 虚拟地址空间。<br>
+      如果某级页表项标记为 <strong>大页 (2MB/1GB)</strong>，遍历可提前结束，省去后续级别。
+    </div>
+
+    <div style="margin-top:12px; color:var(--text-dim); font-size:0.88em;">
+      ⚡ <strong>TLB 缓存命中率极高</strong> — 绝大多数转换跳过全部 4 级遍历，直接在 TLB 中得到结果。
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================================= -->
+<!-- STEP 3 -->
+<!-- ================================================================================= -->
+<div class="section-title" data-edit-id="section-title-3"><span class="num">3</span> TLB 快表查询 (Translation Lookaside Buffer)</div>
+<div class="step-card open">
+  <div class="step-header" onclick="this.parentElement.classList.toggle('open')">
+    <div class="step-dot" style="background:var(--cyan);"></div>
+    <div class="step-title">TLB = VPN → PPN 的硬件缓存，命中则 1 周期完成</div>
+    <span class="step-tag" style="color:var(--cyan);background:#143d38;">硬件缓存</span>
+  </div>
+  <div class="step-body" data-edit-id="step-body-3">
+    <p>TLB 是一个小型、全相联或组相联的硬件缓存，存储最近使用的 VPN→PPN 映射。它是 MMU 内部的 SRAM，访问极快。</p>
+
+    <!-- TLB 结构示图 -->
+    <h4 style="margin:14px 0 8px; font-size:0.95em;">ITLB + DTLB 架构 (以 Skylake 为例)</h4>
+    <table class="info-table">
+      <tr><th>TLB 层级</th><th>用途</th><th>条目数</th><th>页大小</th><th>延迟</th></tr>
+      <tr><td><strong>L1 ITLB</strong></td><td>指令取指</td><td>128 项 (8路组相联)</td><td>4KB</td><td>1 周期</td></tr>
+      <tr><td><strong>L1 DTLB</strong></td><td>数据读写</td><td>64 项 (4路组相联)</td><td>4KB</td><td>1 周期</td></tr>
+      <tr><td><strong>L2 STLB</strong></td><td>统一二级</td><td>1536 项 (12路)</td><td>4KB / 2MB</td><td>~8 周期</td></tr>
+    </table>
+
+    <h4 style="margin:18px 0 8px; font-size:0.95em;">TLB 查找流程</h4>
+    <div style="display:flex; gap:24px; flex-wrap:wrap;">
+      <div style="flex:1; min-width:280px;">
+        <div class="code-block">
+<span class="c">// 硬件并行比较：VPN 与 TLB 所有条目的 Tag</span>
+<span class="k">for</span> (<span class="n">each entry</span> <span class="k">in</span> <span class="n">TLB</span>) {
+    <span class="k">if</span> (entry.tag == <span class="v">VPN</span> && entry.valid) {
+        <span class="c">// ✅ TLB HIT — 1 周期</span>
+        <span class="k">return</span> { <span class="n">PPN</span>: entry.ppn, <span class="n">flags</span>: entry.flags };
+    }
+}
+<span class="c">// ❌ TLB MISS — 需走页表遍历</span>
+        </div>
+      </div>
+      <div style="flex:1; min-width:280px;">
+        <p><span class="badge badge-fast">TLB Hit</span> <strong>~1 周期</strong>，99%+ 的转换命中</p>
+        <p style="margin-top:8px;"><span class="badge badge-slow">TLB Miss</span> <strong>~20-100 周期</strong>，触发硬件页表遍历</p>
+        <p style="margin-top:12px; font-size:0.88em; color:var(--text-dim);">
+          TLB 本质上是一个 <strong>内容可寻址存储器 (CAM)</strong>，允许并行比较所有条目。
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================================= -->
+<!-- STEP 4 -->
+<!-- ================================================================================= -->
+<div class="section-title" data-edit-id="section-title-4"><span class="num">4</span> 硬件页表遍历 (Page Table Walk)</div>
+<div class="step-card open">
+  <div class="step-header" onclick="this.parentElement.classList.toggle('open')">
+    <div class="step-dot" style="background:var(--orange);"></div>
+    <div class="step-title">TLB Miss → MMU 硬件自动走 4 级页表 (x86-64)</div>
+    <span class="step-tag" style="color:var(--orange);background:#3d2e12;">核心流程</span>
+  </div>
+  <div class="step-body">
+    <p>当 TLB 未命中时，MMU 从 <strong>CR3 寄存器</strong>（存放 PGD 物理基址）出发，逐级读取页表。</p>
+
+    <!-- 完整遍历流程图 -->
+    <h4 style="margin:16px 0 10px;">4 级遍历完整图解</h4>
+
+    <div style="background:#0d1117; border:1px solid var(--border); border-radius:12px; padding:20px; overflow-x:auto; margin:14px 0;">
+
+      <!-- Level 0: CR3 -->
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
+        <div style="background:#1a3a5c; border:2px solid #58a6ff; border-radius:8px; padding:10px 16px; min-width:100px; text-align:center;">
+          <span style="font-size:0.7em; color:var(--text-dim); display:block;">根指针</span>
+          <strong style="color:#58a6ff;">CR3</strong><br>
+          <span style="font-size:0.78em;">PGD 基址</span>
+        </div>
+        <span style="font-size:1.3em; color:var(--accent);">→</span>
+        <div style="flex:1; text-align:center; font-size:0.85em; color:var(--text-dim);">
+          CR3 指向 PGD 物理页框<br>每个进程有独立的 CR3 值
+        </div>
+      </div>
+
+      <!-- PGD -->
+      <div style="display:flex; align-items:stretch; gap:8px; margin:8px 0 16px 30px;">
+        <div style="width:60px; display:flex; align-items:center; justify-content:center; background:#2d1f4e; border-radius:8px 0 0 8px; writing-mode:vertical-rl; font-size:0.78em; padding:8px 4px;">PGD</div>
+        <div style="flex:1; background:#1c2333; border:1px solid var(--border); border-radius:0 8px 8px 0; padding:12px;">
+          <span style="font-size:0.75em; color:var(--text-dim);">Level 4 — 页全局目录 (Page Global Directory)</span><br>
+          <span style="color:var(--purple);">PGD[ VL4 ]</span> → 读取第 VL4 项，得到下一级 <strong style="color:var(--accent);">PUD 物理基址</strong>
+        </div>
+      </div>
+      <div style="text-align:center; margin:-4px 0 2px 80px; color:var(--accent);">↓ VL4 索引选中此项</div>
+
+      <!-- PUD -->
+      <div style="display:flex; align-items:stretch; gap:8px; margin:8px 0 16px 90px;">
+        <div style="width:60px; display:flex; align-items:center; justify-content:center; background:#2d1f4e; border-radius:8px 0 0 8px; writing-mode:vertical-rl; font-size:0.78em; padding:8px 4px;">PUD</div>
+        <div style="flex:1; background:#1c2333; border:1px solid var(--border); border-radius:0 8px 8px 0; padding:12px;">
+          <span style="font-size:0.75em; color:var(--text-dim);">Level 3 — 页上级目录 (Page Upper Directory)</span><br>
+          <span style="color:var(--purple);">PUD[ VL3 ]</span> → 读取第 VL3 项，得到下一级 <strong style="color:var(--accent);">PMD 物理基址</strong>
+        </div>
+      </div>
+      <div style="text-align:center; margin:-4px 0 2px 140px; color:var(--accent);">↓ VL3 索引选中此项</div>
+
+      <!-- PMD -->
+      <div style="display:flex; align-items:stretch; gap:8px; margin:8px 0 16px 150px;">
+        <div style="width:60px; display:flex; align-items:center; justify-content:center; background:#2d1f4e; border-radius:8px 0 0 8px; writing-mode:vertical-rl; font-size:0.78em; padding:8px 4px;">PMD</div>
+        <div style="flex:1; background:#1c2333; border:1px solid var(--border); border-radius:0 8px 8px 0; padding:12px;">
+          <span style="font-size:0.75em; color:var(--text-dim);">Level 2 — 页中间目录 (Page Middle Directory)</span><br>
+          <span style="color:var(--purple);">PMD[ VL2 ]</span> → 读取第 VL2 项，得到下一级 <strong style="color:var(--accent);">PTE 物理基址</strong>
+          <br><span style="font-size:0.75em; color:var(--orange);">若 PS=1 → 2MB 大页，遍历在此结束</span>
+        </div>
+      </div>
+      <div style="text-align:center; margin:-4px 0 2px 200px; color:var(--accent);">↓ VL2 索引选中此项</div>
+
+      <!-- PTE -->
+      <div style="display:flex; align-items:stretch; gap:8px; margin:8px 0 10px 210px;">
+        <div style="width:60px; display:flex; align-items:center; justify-content:center; background:#153329; border-radius:8px 0 0 8px; writing-mode:vertical-rl; font-size:0.78em; padding:8px 4px; color:var(--green);">PTE</div>
+        <div style="flex:1; background:#1c2333; border:2px solid var(--green); border-radius:0 8px 8px 0; padding:12px;">
+          <span style="font-size:0.75em; color:var(--text-dim);">Level 1 — 页表项 (Page Table Entry)</span><br>
+          <span style="color:var(--green);">PTE[ VL1 ]</span> → 读取第 VL1 项，得到 <strong style="color:var(--green);">最终物理页框号 PPN</strong>
+        </div>
+      </div>
+
+      <div style="text-align:center; margin:12px 0 4px;">
+        <span style="font-size:1.5em; color:var(--green);">↓</span>
+      </div>
+      <div style="text-align:center; padding:14px; background:#153329; border:2px solid var(--green); border-radius:10px; margin:0 auto; max-width:400px;">
+        <span style="font-size:0.75em; color:var(--text-dim); display:block;">最终结果</span>
+        <strong style="color:var(--green); font-size:1.1em;">PPN (Physical Page Number)</strong><br>
+        <span style="font-size:0.82em;">物理页框号，指向 4KB 物理页</span>
+      </div>
+    </div>
+
+    <h4 style="margin:20px 0 10px;">每一步做了什么？</h4>
+    <table class="info-table">
+      <tr><th>步骤</th><th>输入</th><th>操作</th><th>输出</th></tr>
+      <tr>
+        <td><strong>①</strong></td>
+        <td class="mono">CR3 + VL4</td>
+        <td>读取 PGD[VL4] = PGD基址 + VL4 × 8 字节</td>
+        <td>PUD 基址 (40位物理地址)</td>
+      </tr>
+      <tr>
+        <td><strong>②</strong></td>
+        <td class="mono">PUD基址 + VL3</td>
+        <td>读取 PUD[VL3] = PUD基址 + VL3 × 8 字节</td>
+        <td>PMD 基址</td>
+      </tr>
+      <tr>
+        <td><strong>③</strong></td>
+        <td class="mono">PMD基址 + VL2</td>
+        <td>读取 PMD[VL2] = PMD基址 + VL2 × 8 字节</td>
+        <td>PTE 数组基址</td>
+      </tr>
+      <tr>
+        <td><strong>④</strong></td>
+        <td class="mono">PTE基址 + VL1</td>
+        <td>读取 PTE[VL1] = PTE基址 + VL1 × 8 字节</td>
+        <td style="color:var(--green);"><strong>PPN 物理页框号</strong></td>
+      </tr>
+    </table>
+
+    <div class="note">
+      ⚠️ <strong>每级都需访存一次</strong> — 4 级页表 = 额外 4 次内存访问！<br>
+      这就是 TLB 如此重要的原因：把 4 次访存缩减为 1 次 TLB 查找。
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================================= -->
+<!-- STEP 5 — 页表项结构 -->
+<!-- ================================================================================= -->
+<div class="section-title" data-edit-id="section-title-5"><span class="num">5</span> 页表项 (PTE) 内部结构 & 权限检查</div>
+<div class="step-card open">
+  <div class="step-header" onclick="this.parentElement.classList.toggle('open')">
+    <div class="step-dot" style="background:var(--pink);"></div>
+    <div class="step-title">每个 8 字节 PTE 包含的不只是地址，还有权限位</div>
+    <span class="step-tag" style="color:var(--pink);background:#3d1a30;">权限控制</span>
+  </div>
+  <div class="step-body">
+    <p>x86-64 的页表项是 64 位宽，bit 12-51 存物理页框号 (PPN)，bit 0-11 存标志位。</p>
+
+    <div class="addr-vis" style="font-size:0.78em; flex-wrap:wrap; gap:4px;">
+      <div class="seg" style="background:#1c2333; border:1px solid var(--border); border-radius:6px;">
+        <span class="seg-title">NX</span>bit63
+      </div>
+      <div class="seg" style="background:#1c2333; border:1px solid var(--border); border-radius:6px;">
+        <span class="seg-title">可用</span>bits 62:52
+      </div>
+      <div class="seg bg-green" style="flex:3;">
+        <span class="seg-title">PPN 物理页框号</span>bits 51:12 &nbsp;<span style="font-size:0.8em;">(最多 2⁴⁰ 个物理页框)</span>
+      </div>
+      <div class="seg bg-pink" style="flex:1.5;">
+        <span class="seg-title">标志位</span>bits 11:0
+      </div>
+    </div>
+
+    <h4 style="margin:18px 0 10px;">bit 0-11 标志位详解</h4>
+    <table class="info-table">
+      <tr><th>Bit</th><th>名称</th><th>含义</th><th>检查失败 →</th></tr>
+      <tr><td class="mono">0</td><td><strong>P (Present)</strong></td><td>页是否在物理内存中</td><td><span class="badge badge-error">Page Fault</span></td></tr>
+      <tr><td class="mono">1</td><td><strong>R/W</strong></td><td>0=只读, 1=可写</td><td><span class="badge badge-error">Protection Fault</span></td></tr>
+      <tr><td class="mono">2</td><td><strong>U/S</strong></td><td>0=内核, 1=用户可访问</td><td><span class="badge badge-error">Protection Fault</span></td></tr>
+      <tr><td class="mono">3</td><td><strong>PWT</strong></td><td>页级 Write-Through 缓存策略</td><td>—</td></tr>
+      <tr><td class="mono">4</td><td><strong>PCD</strong></td><td>页级 Cache Disable</td><td>—</td></tr>
+      <tr><td class="mono">5</td><td><strong>A (Accessed)</strong></td><td>MMU 自动置1，表示该页被访问过</td><td>—</td></tr>
+      <tr><td class="mono">6</td><td><strong>D (Dirty)</strong></td><td>MMU 自动置1，表示该页被写过</td><td>—</td></tr>
+      <tr><td class="mono">7</td><td><strong>PS (Page Size)</strong></td><td>在 PMD/PUD 级：0=4KB, 1=大页</td><td>—</td></tr>
+      <tr><td class="mono">8</td><td><strong>G (Global)</strong></td><td>进程切换时不刷出 TLB</td><td>—</td></tr>
+      <tr><td class="mono">9-11</td><td><strong>Ignored</strong></td><td>内核自由使用</td><td>—</td></tr>
+      <tr><td class="mono">63</td><td><strong>NX (No-eXecute)</strong></td><td>禁止执行 (W^X 安全机制)</td><td><span class="badge badge-error">NX Fault</span></td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ================================================================================= -->
+<!-- STEP 6 — Page Fault -->
+<!-- ================================================================================= -->
+<div class="section-title" data-edit-id="section-title-6"><span class="num">6</span> 缺页异常 (Page Fault) — Present 位为 0 时</div>
+<div class="step-card open">
+  <div class="step-header" onclick="this.parentElement.classList.toggle('open')">
+    <div class="step-dot" style="background:var(--red);"></div>
+    <div class="step-title">硬件触发 #PF 异常 → 操作系统接管处理</div>
+    <span class="step-tag" style="color:var(--red);background:#3d1a1a;">异常路径</span>
+  </div>
+  <div class="step-body">
+    <p>当页表遍历中某级的 <strong>P (Present) 位 = 0</strong>，说明该页不在物理内存中。MMU 触发 14 号异常 (Page Fault)，操作系统介入。</p>
+
+    <div style="display:flex; gap:20px; flex-wrap:wrap; margin:14px 0;">
+      <div style="flex:1; min-width:280px;">
+        <div class="code-block">
+<span class="c">// CPU 硬件动作</span>
+1. 保存故障地址到 <span class="v">CR2</span> 寄存器
+2. 将错误码压栈
+   - bit0: 0=缺页, 1=保护违例
+   - bit1: 0=读, 1=写
+   - bit2: 0=内核, 1=用户态
+   - bit3: 1=保留位违例
+   - bit4: 1=取指
+3. 跳转到 IDT[14] → page_fault_handler()
+        </div>
+      </div>
+      <div style="flex:1; min-width:280px;">
+        <div class="code-block">
+<span class="c">// Linux 内核处理 (do_page_fault)</span>
+<span class="k">switch</span> (<span class="n">fault_type</span>) {
+  <span class="c">// 情况1: 合法缺页</span>
+  <span class="k">case</span> <span class="v">VALID_ACCESS</span>:
+      <span class="n">page</span> = <span class="n">alloc_page</span>();        <span class="c">// 分配物理页</span>
+      <span class="n">read_from_disk</span>(page);         <span class="c">// 从磁盘读入</span>
+      <span class="n">update_page_table</span>(page, pte); <span class="c">// 更新PTE</span>
+      <span class="k">return</span>; <span class="c">// 重试指令 ✅</span>
+
+  <span class="c">// 情况2: 非法访问 (如写只读页)</span>
+  <span class="k">case</span> <span class="v">WRITE_TO_READONLY</span>:
+      <span class="n">send_signal</span>(SIGSEGV);       <span class="c">// 段错误 ❌</span>
+}
+        </div>
+      </div>
+    </div>
+
+    <div class="note">
+      <strong>缺页不一定是错误：</strong> 大多数缺页是正常的"按需调页 (Demand Paging)"——<br>
+      程序首次访问某页，内核才从磁盘加载。这也是 mmap 文件映射、写时复制 (Copy-on-Write) 的底层机制。
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================================= -->
+<!-- STEP 7 — 组装物理地址 -->
+<!-- ================================================================================= -->
+<div class="section-title" data-edit-id="section-title-7"><span class="num">7</span> 组装最终物理地址</div>
+<div class="step-card open">
+  <div class="step-header" onclick="this.parentElement.classList.toggle('open')">
+    <div class="step-dot" style="background:var(--green);"></div>
+    <div class="step-title">物理地址 = PPN << 12 | VPO</div>
+    <span class="step-tag" style="color:var(--green);background:#153329;">最终输出</span>
+  </div>
+  <div class="step-body">
+    <p>从 TLB 或页表遍历拿到 PPN 后，MMU 将 VPO（页内偏移，低12位）直接拼接到 PPN 后面。</p>
+
+    <div class="addr-vis">
+      <div class="seg bg-green" style="flex:1.5;">
+        <span class="seg-title">物理页框号 PPN</span>
+        <span style="color:#3fb950;">来自 TLB / PTE</span>
+        <div class="bits">高位 (物理地址宽度 − 12)</div>
+      </div>
+      <span class="addr-sep">∥</span>
+      <div class="seg bg-green" style="flex:0.8;">
+        <span class="seg-title">页内偏移 VPO</span>
+        <span style="color:#3fb950;">直接复制</span>
+        <div class="bits">低 12 位</div>
+      </div>
+    </div>
+
+    <div style="text-align:center; margin:16px 0;">
+      <div style="display:inline-block; padding:12px 28px; background:#153329; border:2px solid #3fb950; border-radius:10px; font-family:monospace;">
+        <span style="color:var(--text-dim);">物理地址 = </span>
+        <span style="color:#79c0ff;">(PPN << 12)</span>
+        <span style="color:var(--text-dim);"> | </span>
+        <span style="color:#a5d6ff;">VPO</span>
+        <div style="font-size:0.8em; color:var(--text-dim); margin-top:4px;">
+          VPO 不变！页是映射的最小单位，偏移不需要转换
+        </div>
+      </div>
+    </div>
+
+    <div class="note">
+      <strong>VPO (12位) = PPO (12位)</strong>，因为页大小为 4KB = 2¹² 字节。<br>
+      页内偏移在虚拟和物理地址中完全相同，无需转换。
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================================= -->
+<!-- STEP 8 — Cache -->
+<!-- ================================================================================= -->
+<div class="section-title" data-edit-id="section-title-8"><span class="num">8</span> 访问 L1/L2/L3 Cache 与主存</div>
+<div class="step-card open">
+  <div class="step-header" onclick="this.parentElement.classList.toggle('open')">
+    <div class="step-dot" style="background:var(--accent);"></div>
+    <div class="step-title">物理地址 → 查询 CPU Cache → 主存 DRAM</div>
+    <span class="step-tag" style="color:var(--accent);background:#1a3a5c;">数据路径</span>
+  </div>
+  <div class="step-body">
+    <p>拿到物理地址后，CPU 用它去查缓存。现代 CPU 大多使用 <strong>VIPT (Virtual Index, Physical Tag)</strong> 的 L1 Cache。</p>
+
+    <div class="addr-vis" style="font-size:0.82em;">
+      <div class="seg bg-orange" style="flex:0.7;">
+        <span class="seg-title">Tag</span>物理地址高位
+      </div>
+      <span class="addr-sep"> | </span>
+      <div class="seg bg-orange" style="flex:0.7;">
+        <span class="seg-title">Index</span>索引 Cache 组
+      </div>
+      <span class="addr-sep"> | </span>
+      <div class="seg bg-green" style="flex:0.5;">
+        <span class="seg-title">Offset</span>块内偏移
+      </div>
+    </div>
+
+    <div style="display:flex; gap:16px; flex-wrap:wrap; margin:14px 0;">
+      <div style="flex:1; min-width:200px; background:#1a2332; border-radius:8px; padding:14px; text-align:center;">
+        <div style="font-size:1.5em;">⚡</div>
+        <strong>L1 Cache</strong><br>
+        <span style="font-size:0.82em; color:var(--text-dim);">32KB, 8路, ~4周期</span>
+      </div>
+      <div style="flex:1; min-width:200px; background:#1a2332; border-radius:8px; padding:14px; text-align:center;">
+        <div style="font-size:1.5em;">📦</div>
+        <strong>L2 Cache</strong><br>
+        <span style="font-size:0.82em; color:var(--text-dim);">256KB, 8路, ~12周期</span>
+      </div>
+      <div style="flex:1; min-width:200px; background:#1a2332; border-radius:8px; padding:14px; text-align:center;">
+        <div style="font-size:1.5em;">🏭</div>
+        <strong>L3 Cache (LLC)</strong><br>
+        <span style="font-size:0.82em; color:var(--text-dim);">共享, ~36周期</span>
+      </div>
+      <div style="flex:1; min-width:200px; background:#1a2332; border-radius:8px; padding:14px; text-align:center;">
+        <div style="font-size:1.5em;">💾</div>
+        <strong>DRAM</strong><br>
+        <span style="font-size:0.82em; color:var(--text-dim);">~200周期</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================================= -->
+<!-- ====== 完整延迟总结 ====== -->
+<!-- ================================================================================= -->
+<div class="section-title" data-edit-id="section-title-9"><span class="num">★</span> 完整路径延迟一览</div>
+<div class="step-card open">
+  <div class="step-header" onclick="this.parentElement.classList.toggle('open')">
+    <div class="step-dot" style="background:var(--accent);"></div>
+    <div class="step-title">从虚拟地址到数据：最快路径 vs 最慢路径</div>
+    <span class="step-tag" style="color:var(--accent);background:#1a3a5c;">性能总结</span>
+  </div>
+  <div class="step-body">
+    <table class="info-table">
+      <tr><th>场景</th><th>TLB</th><th>页表遍历</th><th>Cache</th><th>总延迟</th></tr>
+      <tr>
+        <td><span class="badge badge-fast">最快路径</span></td>
+        <td>L1 TLB Hit (1c)</td>
+        <td>无需</td>
+        <td>L1 Cache Hit (~4c)</td>
+        <td style="color:var(--green);"><strong>~5 周期</strong></td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-fast">常规路径</span></td>
+        <td>L1 TLB Hit (1c)</td>
+        <td>无需</td>
+        <td>L3 Cache Hit (~36c)</td>
+        <td style="color:var(--green);"><strong>~37 周期</strong></td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-slow">TLB Miss</span></td>
+        <td>Miss → STLB Hit (8c)</td>
+        <td>无需</td>
+        <td>L1 Hit (~4c)</td>
+        <td style="color:var(--orange);"><strong>~12 周期</strong></td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-slow">STLB Miss</span></td>
+        <td>Miss</td>
+        <td>4级遍历 (4次访存)</td>
+        <td>L1 Hit (~4c)</td>
+        <td style="color:var(--orange);"><strong>~80-100 周期</strong></td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-error">缺页异常</span></td>
+        <td>Miss</td>
+        <td>遍历 + 异常处理</td>
+        <td>磁盘 IO</td>
+        <td style="color:var(--red);"><strong>~10ms (百万周期)</strong></td>
+      </tr>
+    </table>
+
+    <div class="note" style="margin-top:20px;">
+      <strong>关键结论：</strong> TLB 是现代 CPU 性能的基石。TLB 命中时，地址转换几乎"免费"。<br>
+      TLB Miss 的代价是几十倍，而 Page Fault 则是上百万倍的惩罚 —— 这就是为什么所有操作系统都会尽量让热数据保持在内存中。
+    </div>
+  </div>
+</div>
+
+</div><!-- .container -->
+
+<script>
+// ── 1. On load: auto-assign data-edit-id to all editable regions ──
+(function initEditIds() {
+  // Hero
+  const heroH1 = document.querySelector('.hero h1');
+  if (heroH1 && !heroH1.hasAttribute('data-edit-id')) heroH1.setAttribute('data-edit-id', 'hero-title');
+  const heroSub = document.querySelector('.hero .sub');
+  if (heroSub && !heroSub.hasAttribute('data-edit-id')) heroSub.setAttribute('data-edit-id', 'hero-sub');
+  // Overview h2
+  const overviewH2 = document.querySelector('.container > h2');
+  if (overviewH2 && !overviewH2.hasAttribute('data-edit-id')) overviewH2.setAttribute('data-edit-id', 'overview-h2');
+  // Section titles
+  document.querySelectorAll('.section-title').forEach((el, i) => {
+    if (!el.hasAttribute('data-edit-id')) el.setAttribute('data-edit-id', 'section-title-' + (i + 1));
+  });
+  // Step titles
+  document.querySelectorAll('.step-title').forEach((el, i) => {
+    if (!el.hasAttribute('data-edit-id')) el.setAttribute('data-edit-id', 'step-title-' + (i + 1));
+  });
+  // Step bodies
+  document.querySelectorAll('.step-body').forEach((el, i) => {
+    if (!el.hasAttribute('data-edit-id')) el.setAttribute('data-edit-id', 'step-body-' + (i + 1));
+  });
+})();
+
+// ── 2. Capture clean page template BEFORE any edits ──
+// Must capture outerHTML after id assignment, before any user edits
+var pageTemplate = document.documentElement.outerHTML;
+
+// ── Step card toggle ──
+// Remove inline onclick (conflicts with event listener - causes double-toggle)
+document.querySelectorAll('.step-header').forEach(function(h) { h.removeAttribute('onclick'); });
+document.querySelectorAll('.step-header').forEach(h => {
+  h.addEventListener('click', () => {
+    if (!document.body.classList.contains('editing')) {
+      h.parentElement.classList.toggle('open');
+    }
+  });
+});
+
+// ── Toast ──
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._tid);
+  t._tid = setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+// ── Enter edit mode ──
+function enterEditMode() {
+  document.body.classList.add('editing');
+  var sel = '.step-body, .section-title, .step-title, .hero h1, .hero .sub, .container > h2';
+  document.querySelectorAll(sel).forEach(function(el) { el.contentEditable = 'true'; });
+  showToast('✏️ 编辑模式已开启 — 点击文字直接修改');
+}
+
+// ── Cancel edit ──
+function cancelEdit() {
+  if (!confirm('放弃所有修改，恢复到编辑前的状态？')) return;
+  // Reload the page to get a fresh state
+  location.reload();
+}
+
+// ── Save HTML (snapshot-based injection) ──
+function saveHTML() {
+  // 1. Build a temp doc from the clean snapshot
+  var parser = new DOMParser();
+  var tmpDoc = parser.parseFromString(pageTemplate, 'text/html');
+
+  // 2. Collect all editable regions from live page
+  var liveEdits = document.querySelectorAll('[data-edit-id]');
+
+  liveEdits.forEach(function(liveEl) {
+    var id = liveEl.getAttribute('data-edit-id');
+    if (!id) return;
+    // Find corresponding element in template
+    var tmpEl = tmpDoc.querySelector('[data-edit-id="' + id + '"]');
+    if (tmpEl) {
+      // Deep-clone the live content to avoid reference issues
+      // Strip contentEditable from cloned fragment
+      var clone = liveEl.cloneNode(true);
+      clone.removeAttribute('contenteditable');
+      clone.removeAttribute('contentEditable');
+      // Replace innerHTML of template element with the live content
+      tmpEl.innerHTML = clone.innerHTML;
+      // Remove any leftover contentEditable from children
+      tmpEl.querySelectorAll('[contenteditable]').forEach(function(c) { c.removeAttribute('contenteditable'); });
+    }
+  });
+
+  // 2b. Handle orphan elements (dynamically added by addStep — not in template)
+  liveEdits.forEach(function(liveEl) {
+    var id = liveEl.getAttribute('data-edit-id');
+    if (!id) return;
+    var tmpEl = tmpDoc.querySelector('[data-edit-id="' + id + '"]');
+    if (tmpEl) return; // already injected in step 2
+    // This element was added after snapshot — append to template container
+    var tmplContainer = tmpDoc.querySelector('.container');
+    if (!tmplContainer) return;
+    var clone = liveEl.cloneNode(true);
+    clone.removeAttribute('contenteditable');
+    clone.querySelectorAll('[contenteditable]').forEach(function(c) { c.removeAttribute('contenteditable'); });
+    tmplContainer.appendChild(clone);
+  });
+
+  // 3. Remove script-injected data-edit-id attributes (will be re-assigned on next load)
+  tmpDoc.querySelectorAll('[data-edit-id]').forEach(function(el) { el.removeAttribute('data-edit-id'); });
+
+  // 4. Remove editing class from body if present
+  var tBody = tmpDoc.querySelector('body');
+  if (tBody) tBody.classList.remove('editing');
+
+  // 5. Ensure all step cards have open class (CSS handles display)
+  tmpDoc.querySelectorAll('.step-card').forEach(function(c) { c.classList.add('open'); });
+
+  // 6. Clean up contentEditable remnants
+  tmpDoc.querySelectorAll('[contenteditable]').forEach(function(el) { el.removeAttribute('contenteditable'); });
+
+  // 7. Remove inline onclick from step-headers (JS event listener handles toggle)
+  tmpDoc.querySelectorAll('.step-header').forEach(function(h) { h.removeAttribute('onclick'); });
+
+  // 8. Exit edit mode in live page
+  document.body.classList.remove('editing');
+  document.querySelectorAll('[contenteditable]').forEach(function(el) { el.removeAttribute('contentEditable'); });
+  document.querySelectorAll('.step-card').forEach(function(c) { c.classList.add('open'); });
+
+  // 9. Serialize and download
+  var html = '<!DOCTYPE html>\n' + tmpDoc.documentElement.outerHTML;
+  var blob = new Blob([html], { type: 'text/html;charset=UTF-8' });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'mmu流程图.html';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('💾 已保存 — 请用下载的文件覆盖原文件');
+}
+
+// ── Add new step ──
+function addStep() {
+  var container = document.querySelector('.container');
+  var steps = container.querySelectorAll('.step-card');
+  var n = steps.length + 1;
+
+  var colors = ['var(--accent)','var(--purple)','var(--cyan)','var(--orange)','var(--pink)','var(--green)','var(--red)'];
+  var color = colors[(n-1) % colors.length];
+  var bgMap = {
+    'var(--accent)':'#1a3a5c', 'var(--purple)':'#2d1f4e', 'var(--cyan)':'#143d38',
+    'var(--orange)':'#3d2e12', 'var(--pink)':'#3d1a30', 'var(--green)':'#153329', 'var(--red)':'#3d1a1a'
+  };
+
+  var titleDiv = document.createElement('div');
+  titleDiv.className = 'section-title';
+  titleDiv.setAttribute('data-edit-id', 'section-title-' + n);
+  titleDiv.contentEditable = 'true';
+  titleDiv.innerHTML = '<span class="num">' + n + '</span> 新步骤标题 (点击修改)';
+
+  var card = document.createElement('div');
+  card.className = 'step-card open';
+  card.innerHTML =
+    '<div class="step-header">' +
+      '<div class="step-dot" style="background:' + color + ';"></div>' +
+      '<div class="step-title" data-edit-id="step-title-' + n + '" contenteditable="true">新步骤标题</div>' +
+      '<span class="step-tag" style="color:' + color + ';background:' + (bgMap[color]||'#1c2333') + ';">新标签</span>' +
+    '</div>' +
+    '<div class="step-body" data-edit-id="step-body-' + n + '" contenteditable="true">' +
+      '<p>在这里写你的内容...支持 HTML</p>' +
+      '<div class="note">提示：可以用 &lt;table&gt;、&lt;div&gt;、&lt;pre&gt; 等 HTML 标签丰富内容。</div>' +
+    '</div>';
+
+  // Add step-header click handler
+  card.querySelector('.step-header').addEventListener('click', function() {
+    if (!document.body.classList.contains('editing')) card.classList.toggle('open');
+  });
+
+  // Insert before the last section-title (delay summary) if it exists
+  var allTitles = container.querySelectorAll('.section-title');
+  var lastTitle = allTitles[allTitles.length - 1];
+  if (lastTitle && lastTitle.textContent.includes('延迟')) {
+    lastTitle.before(titleDiv);
+    lastTitle.before(card);
+  } else {
+    container.appendChild(titleDiv);
+    container.appendChild(card);
+  }
+
+  titleDiv.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  showToast('➕ 新步骤已添加 — 点击标题和正文直接编辑');
+}
+</script>
+
+</body>
+</html>

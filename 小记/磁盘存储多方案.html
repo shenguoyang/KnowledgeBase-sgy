@@ -194,9 +194,70 @@ canvas { display:block; margin:0 auto; border-radius:8px; background:#fafbfc; }
 .flow-yes { background:#d1fae5; color:#065f46; }
 .flow-no { background:#fee2e2; color:#991b1b; }
 .flow-down { font-size:20px; color:var(--primary); }
+
+/* ===== 编辑按钮 ===== */
+.edit-toggle {
+  position:fixed; bottom:24px; right:24px; z-index:9999;
+  width:48px; height:48px; border-radius:50%; border:none;
+  background:var(--primary); color:#fff; font-size:20px;
+  cursor:pointer; box-shadow:0 4px 12px rgba(26,115,232,0.35);
+  transition:all 0.2s; display:flex; align-items:center; justify-content:center;
+}
+.edit-toggle:hover { background:var(--primary-dark); transform:scale(1.1); }
+.edit-toggle.active { background:var(--success); }
+.edit-toolbar {
+  position:fixed; top:12px; right:24px; z-index:9999;
+  display:none; gap:8px; background:#fff; padding:8px 12px;
+  border-radius:8px; box-shadow:0 2px 8px rgba(0,0,0,0.15);
+  font-size:13px; align-items:center;
+}
+.edit-toolbar.visible { display:flex; }
+.edit-toolbar button {
+  padding:4px 12px; border:1px solid var(--border); border-radius:4px;
+  background:#fff; cursor:pointer; font-size:12px; transition:all 0.2s;
+}
+.edit-toolbar button:hover { background:var(--primary); color:#fff; border-color:var(--primary); }
+.edit-toolbar button.save-btn { background:var(--success); color:#fff; border-color:var(--success); }
+body.editing .sidebar { display:none; }
+body.editing .main { margin-left:0; max-width:100%; }
+body.editing .section, body.editing .card, body.editing .callout, body.editing .anim-container {
+  outline:1px dashed var(--primary); outline-offset:2px;
+}
+body.editing .section:hover, body.editing .card:hover, body.editing .callout:hover {
+  outline:2px dashed var(--warning);
+}
+
+/* ===== 背景知识图 ===== */
+.bg-knowledge-grid {
+  display:flex; gap:16px; flex-wrap:wrap; margin:16px 0;
+}
+.bg-knowledge-grid .bg-card {
+  flex:1; min-width:240px; background:#f8fafc; border-radius:8px;
+  padding:16px; border:1px solid var(--border);
+}
+.bg-knowledge-grid .bg-card h4 { margin:0 0 8px; font-size:14px; color:var(--primary); }
+.bg-knowledge-grid .bg-card p { font-size:13px; color:var(--text-secondary); margin:0; }
+.dataflow-diagram {
+  display:flex; align-items:center; justify-content:center; gap:8px;
+  flex-wrap:wrap; padding:12px; font-size:12px; margin:8px 0;
+  background:#fafbfc; border-radius:8px; border:1px solid var(--border);
+}
+.dataflow-diagram .df-box {
+  padding:8px 14px; border-radius:6px; font-weight:600;
+  text-align:center; white-space:nowrap;
+}
+.dataflow-diagram .df-arrow { font-size:18px; color:var(--text-secondary); font-weight:700; }
 </style>
 </head>
 <body>
+
+<!-- ==================== 编辑按钮 ==================== -->
+<button class="edit-toggle" id="editToggle" title="切换编辑模式" onclick="toggleEdit()">✎</button>
+<div class="edit-toolbar" id="editToolbar">
+  <span style="color:var(--text-secondary);">编辑模式</span>
+  <button onclick="saveEdit()" class="save-btn">💾 保存 HTML</button>
+  <button onclick="toggleEdit()">退出编辑</button>
+</div>
 
 <!-- ==================== 左侧导航 ==================== -->
 <nav class="sidebar">
@@ -205,9 +266,10 @@ canvas { display:block; margin:0 auto; border-radius:8px; background:#fafbfc; }
   <div class="nav-section">概述</div>
   <a class="nav-item active" href="#overview">背景与问题</a>
   <a class="nav-item" href="#design-goals">设计目标</a>
+  <a class="nav-item" href="#background-knowledge">背景知识：I/O 原理</a>
   <a class="nav-item" href="#startup-defrag">启动碎片整理（共有）</a>
 
-  <div class="nav-section">三种方案</div>
+  <div class="nav-section">四种方案</div>
   <a class="nav-item" href="#plan1">方案一：交错布局 + WriteFile</a>
   <a class="nav-item nav-sub" href="#plan1-anim">原理动画</a>
   <a class="nav-item nav-sub" href="#plan1-principle">底层原理</a>
@@ -223,7 +285,13 @@ canvas { display:block; margin:0 auto; border-radius:8px; background:#fafbfc; }
   <a class="nav-item nav-sub" href="#plan3-principle">底层原理</a>
   <a class="nav-item nav-sub" href="#plan3-eval">方案评估</a>
 
+  <a class="nav-item" href="#plan4">方案四：预分配 + 直接 I/O <span class="badge-rec">数据库经典</span></a>
+  <a class="nav-item nav-sub" href="#plan4-principle">底层原理</a>
+  <a class="nav-item nav-sub" href="#plan4-eval">方案评估</a>
+
   <div class="nav-section">总结</div>
+  <a class="nav-item" href="#scenario-guide">场景化选型指南</a>
+  <a class="nav-item" href="#io-comparison">直接 I/O vs mmap 深度对比</a>
   <a class="nav-item" href="#comparison">方案对比</a>
   <a class="nav-item" href="#recommendation">最终建议</a>
 </nav>
@@ -272,9 +340,91 @@ canvas { display:block; margin:0 auto; border-radius:8px; background:#fafbfc; }
   </div>
 </section>
 
-<!-- ===== 启动碎片整理（三方案共有） ===== -->
+<!-- ===== 背景知识：I/O 原理 ===== -->
+<section id="background-knowledge" class="section">
+  <h2 class="section-title">背景知识：I/O 数据流原理</h2>
+  <p class="section-subtitle">理解以下概念是阅读四种方案的前提——数据在"用户空间 → Page Cache → 磁盘"这条路径上如何流动</p>
+
+  <div class="card">
+    <h3>三种读写方式的核心区别</h3>
+    <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px;">
+      它们的本质区别在于：<strong>用户空间、Page Cache、磁盘这三个环节之间，数据流动的路径和时机完全不同。</strong>
+    </p>
+
+    <div class="bg-knowledge-grid">
+      <div class="bg-card">
+        <h4>① 普通读写 (Buffered I/O)</h4>
+        <div class="dataflow-diagram">
+          <span class="df-box" style="background:#dbeafe;color:#1e40af;">应用 Buffer</span>
+          <span class="df-arrow">←CPU拷贝→</span>
+          <span class="df-box" style="background:#fef3c7;color:#92400e;">Page Cache</span>
+          <span class="df-arrow">←DMA→</span>
+          <span class="df-box" style="background:#e2e8f0;color:#475569;">磁盘</span>
+        </div>
+        <p>数据必须经过 <strong>Page Cache</strong>（内核缓冲区）中转。每次读写发生 2 次 CPU 拷贝 + 2 次 DMA 拷贝。优点是内核自动管理缓存、预读、异步写回，编程最简单。</p>
+      </div>
+      <div class="bg-card">
+        <h4>② 直接 I/O (Direct I/O, O_DIRECT)</h4>
+        <div class="dataflow-diagram">
+          <span class="df-box" style="background:#dbeafe;color:#1e40af;">应用 Buffer</span>
+          <span class="df-arrow">←DMA→</span>
+          <span class="df-box" style="background:#e2e8f0;color:#475569;">磁盘</span>
+        </div>
+        <p><strong>完全跳过 Page Cache</strong>。数据直接在用户 Buffer 和磁盘之间通过 DMA 传输，实现 <strong>零 CPU 拷贝</strong>。但需要应用自己管理缓存，且有严格的内存对齐要求。</p>
+      </div>
+      <div class="bg-card">
+        <h4>③ 内存映射 (mmap / MapViewOfFile)</h4>
+        <div class="dataflow-diagram">
+          <span class="df-box" style="background:#dbeafe;color:#1e40af;">映射区</span>
+          <span class="df-arrow">←页表→</span>
+          <span class="df-box" style="background:#fef3c7;color:#92400e;">Page Cache</span>
+          <span class="df-arrow">←DMA→</span>
+          <span class="df-box" style="background:#e2e8f0;color:#475569;">磁盘</span>
+        </div>
+        <p>将磁盘文件映射到进程虚拟地址空间，<strong>把 I/O 操作变成内存访问</strong>。跳过用户 Buffer 和显式系统调用，0 次 CPU 拷贝。但依赖 Page Cache，断电可能丢失未刷数据。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>预分配 (Pre-allocation) 的作用</h3>
+    <div class="dataflow-diagram" style="justify-content:flex-start;">
+      <span class="df-box" style="background:#d1fae5;color:#065f46;">预分配前的写入</span>
+      <span class="df-arrow">→</span>
+      <span style="font-size:12px; color:var(--text-secondary);">每次 write() 时：分配物理块 + 更新块位图 + 更新 inode + 写日志 → 不可预测的延迟抖动</span>
+    </div>
+    <div class="dataflow-diagram" style="justify-content:flex-start; margin-top:8px;">
+      <span class="df-box" style="background:#d1fae5;color:#065f46;">预分配后 (fallocate)</span>
+      <span class="df-arrow">→</span>
+      <span style="font-size:12px; color:var(--text-secondary);">一次性建立物理块和元数据的映射。之后的 write() 不再触发块分配、位图更新、inode 扩展 → 零抖动</span>
+    </div>
+    <p style="font-size:13px; color:var(--text-secondary); margin-top:12px;">
+      <strong>关键区别：</strong>预分配不改变数据的拷贝流程（CPU 拷贝和 DMA 拷贝照旧），它只消除<strong>运行时元数据操作</strong>带来的延迟抖动。这与磁盘是 HDD 还是 SSD 无关——元数据开销在 SSD 上依然存在，预分配能有效消除它们。
+    </p>
+  </div>
+
+  <div class="card">
+    <h3>四种方案与 I/O 方式的对应关系</h3>
+    <table class="comparison-table">
+      <thead>
+        <tr><th>方案</th><th>使用的 I/O 方式</th><th>CPU 拷贝</th><th>经过 Page Cache</th><th>核心优势</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>方案一：交错布局 + WriteFile</td><td>普通读写</td><td>2 次</td><td>✅ 是</td><td>编程简单，内核全自动</td></tr>
+        <tr><td>方案二：单文件内部块管理</td><td>普通读写（可选直接 I/O）</td><td>2 次（可降为 0 次）</td><td>✅ 是（可跳过）</td><td>变长存储，空间利用率高</td></tr>
+        <tr><td>方案三：内存映射环形缓冲</td><td>内存映射 (mmap)</td><td><span class="best">0 次</span></td><td>✅ 是</td><td>零拷贝 + 无系统调用</td></tr>
+        <tr class="highlight-col"><td>方案四：预分配 + 直接 I/O</td><td>预分配 + 直接 I/O</td><td><span class="best">0 次</span></td><td>❌ 绕过</td><td>零拷贝 + 防 Page Cache 污染</td></tr>
+      </tbody>
+    </table>
+    <div class="callout callout-info" style="margin-top:12px;">
+      <strong>组合使用的精髓：</strong>预分配和直接 I/O 不是互斥的——MySQL InnoDB、Oracle 等数据库正是用 <strong>预分配 + 直接 I/O</strong> 的经典组合。先占好连续空间消除元数据抖动，再用直接 I/O 绕过 Page Cache 实现零拷贝，应用自己管理缓存。
+    </div>
+  </div>
+</section>
+
+<!-- ===== 启动碎片整理（所有方案共有） ===== -->
 <section id="startup-defrag" class="section">
-  <h2 class="section-title">启动碎片整理 <span class="tag tag-green">三方案共有</span></h2>
+  <h2 class="section-title">启动碎片整理 <span class="tag tag-green">所有方案共有</span></h2>
   <p class="section-subtitle">单文件预分配的前提：确保获得物理连续的磁盘区域。三种方案在启动时都需要执行以下步骤。</p>
 
   <div class="card">
@@ -296,7 +446,7 @@ canvas { display:block; margin:0 auto; border-radius:8px; background:#fafbfc; }
   </div>
 
   <div class="card">
-    <h3>三层空间隔离（三方案共有）</h3>
+    <h3>三层空间隔离（所有方案共有）</h3>
     <div class="layer-stack">
       <div class="layer-item">
         <strong>① NTFS 簇分配层</strong>
@@ -317,9 +467,9 @@ canvas { display:block; margin:0 auto; border-radius:8px; background:#fafbfc; }
   </div>
 
   <div class="card">
-    <h3>关键 Windows API（三方案共有）</h3>
+    <h3>关键 Windows API（所有方案共有）</h3>
     <div class="code-block">
-<span class="comment">// ═══ 启动初始化（三方案均需执行） ═══</span>
+<span class="comment">// ═══ 启动初始化（所有方案均需执行） ═══</span>
 <span class="comment">// ① 分析空闲位图</span>
 <span class="type">DWORD</span> bytesReturned;
 <span class="func">DeviceIoControl</span>(hVolume, <span class="string">FSCTL_GET_VOLUME_BITMAP</span>, ...);
@@ -341,7 +491,7 @@ canvas { display:block; margin:0 auto; border-radius:8px; background:#fafbfc; }
 <span class="func">LockFileEx</span>(hFile, LOCKFILE_EXCLUSIVE_LOCK, <span class="string">0</span>, totalSize, ...);
 
 <span class="comment">// ═══ 以上步骤完成后，文件物理布局永不变化 ═══</span>
-<span class="comment">// 三种方案的差异仅在后续的「写入方式」</span></div>
+<span class="comment">// 各方案的差异仅在后续的「写入方式」</span></div>
   </div>
 </section>
 
@@ -383,7 +533,7 @@ canvas { display:block; margin:0 auto; border-radius:8px; background:#fafbfc; }
   <div class="card">
     <h3>方案一特有设计</h3>
     <div class="callout callout-info">
-      <strong>启动碎片整理</strong>为三方案共有机制，详见<a href="#startup-defrag" style="color:var(--primary);">启动碎片整理章节</a>。以下仅描述方案一的独特设计。
+      <strong>启动碎片整理</strong>为所有方案共有机制，详见<a href="#startup-defrag" style="color:var(--primary);">启动碎片整理章节</a>。以下仅描述方案一的独特设计。
     </div>
 
     <h4>1. 文件内部交错布局</h4>
@@ -436,7 +586,7 @@ canvas { display:block; margin:0 auto; border-radius:8px; background:#fafbfc; }
   <div class="card">
     <h3>方案评估</h3>
     <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px;">
-      启动碎片整理、三层空间隔离、单文件句柄、MFT 开销等为<a href="#startup-defrag" style="color:var(--primary);">三方案共有优势</a>，以下仅列方案一独有的优缺点。
+      启动碎片整理、三层空间隔离、单文件句柄、MFT 开销等为<a href="#startup-defrag" style="color:var(--primary);">所有方案共有优势</a>，以下仅列方案一独有的优缺点。
     </p>
     <div style="display:flex; gap:20px; flex-wrap:wrap;">
       <div style="flex:1; min-width:250px;">
@@ -498,7 +648,7 @@ canvas { display:block; margin:0 auto; border-radius:8px; background:#fafbfc; }
   <div class="card">
     <h3>方案二特有设计</h3>
     <div class="callout callout-info">
-      <strong>启动碎片整理</strong>为三方案共有机制，详见<a href="#startup-defrag" style="color:var(--primary);">启动碎片整理章节</a>。以下仅描述方案二的独特设计。
+      <strong>启动碎片整理</strong>为所有方案共有机制，详见<a href="#startup-defrag" style="color:var(--primary);">启动碎片整理章节</a>。以下仅描述方案二的独特设计。
     </div>
 
     <h4>1. 文件内部布局</h4>
@@ -577,7 +727,7 @@ fileSize.QuadPart = headerSize + (<span class="type">uint64_t</span>)blockSize *
   <div class="card">
     <h3>方案评估</h3>
     <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px;">
-      启动碎片整理、三层空间隔离、单文件句柄、MFT 开销等为<a href="#startup-defrag" style="color:var(--primary);">三方案共有优势</a>，以下仅列方案二独有的优缺点。
+      启动碎片整理、三层空间隔离、单文件句柄、MFT 开销等为<a href="#startup-defrag" style="color:var(--primary);">所有方案共有优势</a>，以下仅列方案二独有的优缺点。
     </p>
     <div style="display:flex; gap:20px; flex-wrap:wrap;">
       <div style="flex:1; min-width:250px;">
@@ -601,9 +751,9 @@ fileSize.QuadPart = headerSize + (<span class="type">uint64_t</span>)blockSize *
   </div>
 </section>
 
-<!-- ===== 启动碎片整理（三方案共有） ===== -->
+<!-- ===== 启动碎片整理（所有方案共有） ===== -->
 <section id="startup-defrag" class="section">
-  <h2 class="section-title">启动碎片整理 <span class="tag tag-green">三方案共有</span></h2>
+  <h2 class="section-title">启动碎片整理 <span class="tag tag-green">所有方案共有</span></h2>
   <p class="section-subtitle">单文件预分配的前提：确保获得物理连续的磁盘区域。三种方案在启动时都需要执行以下步骤。</p>
 
   <div class="card">
@@ -625,7 +775,7 @@ fileSize.QuadPart = headerSize + (<span class="type">uint64_t</span>)blockSize *
   </div>
 
   <div class="card">
-    <h3>三层空间隔离（三方案共有）</h3>
+    <h3>三层空间隔离（所有方案共有）</h3>
     <div class="layer-stack">
       <div class="layer-item">
         <strong>① NTFS 簇分配层</strong>
@@ -646,9 +796,9 @@ fileSize.QuadPart = headerSize + (<span class="type">uint64_t</span>)blockSize *
   </div>
 
   <div class="card">
-    <h3>关键 Windows API（三方案共有）</h3>
+    <h3>关键 Windows API（所有方案共有）</h3>
     <div class="code-block">
-<span class="comment">// ═══ 启动初始化（三方案均需执行） ═══</span>
+<span class="comment">// ═══ 启动初始化（所有方案均需执行） ═══</span>
 <span class="comment">// ① 分析空闲位图</span>
 <span class="type">DWORD</span> bytesReturned;
 <span class="func">DeviceIoControl</span>(hVolume, <span class="string">FSCTL_GET_VOLUME_BITMAP</span>, ...);
@@ -670,7 +820,7 @@ fileSize.QuadPart = headerSize + (<span class="type">uint64_t</span>)blockSize *
 <span class="func">LockFileEx</span>(hFile, LOCKFILE_EXCLUSIVE_LOCK, <span class="string">0</span>, totalSize, ...);
 
 <span class="comment">// ═══ 以上步骤完成后，文件物理布局永不变化 ═══</span>
-<span class="comment">// 三种方案的差异仅在后续的「写入方式」</span></div>
+<span class="comment">// 各方案的差异仅在后续的「写入方式」</span></div>
   </div>
 </section>
 
@@ -710,7 +860,7 @@ fileSize.QuadPart = headerSize + (<span class="type">uint64_t</span>)blockSize *
   <div class="card">
     <h3>方案三特有设计</h3>
     <div class="callout callout-info">
-      <strong>启动碎片整理</strong>为三方案共有机制，详见<a href="#startup-defrag" style="color:var(--primary);">启动碎片整理章节</a>。以下仅描述方案三的独特设计。
+      <strong>启动碎片整理</strong>为所有方案共有机制，详见<a href="#startup-defrag" style="color:var(--primary);">启动碎片整理章节</a>。以下仅描述方案三的独特设计。
     </div>
 
     <h4>1. 内存映射的核心机制</h4>
@@ -867,9 +1017,9 @@ mappedView = (<span class="type">uint8_t</span>*)<span class="func">MapViewOfFil
   </div>
 </section>
 
-<!-- ===== 启动碎片整理（三方案共有） ===== -->
+<!-- ===== 启动碎片整理（所有方案共有） ===== -->
 <section id="startup-defrag" class="section">
-  <h2 class="section-title">启动碎片整理 <span class="tag tag-green">三方案共有</span></h2>
+  <h2 class="section-title">启动碎片整理 <span class="tag tag-green">所有方案共有</span></h2>
   <p class="section-subtitle">单文件预分配的前提：确保获得物理连续的磁盘区域。三种方案在启动时都需要执行以下步骤。</p>
 
   <div class="card">
@@ -891,7 +1041,7 @@ mappedView = (<span class="type">uint8_t</span>*)<span class="func">MapViewOfFil
   </div>
 
   <div class="card">
-    <h3>三层空间隔离（三方案共有）</h3>
+    <h3>三层空间隔离（所有方案共有）</h3>
     <div class="layer-stack">
       <div class="layer-item">
         <strong>① NTFS 簇分配层</strong>
@@ -912,9 +1062,9 @@ mappedView = (<span class="type">uint8_t</span>*)<span class="func">MapViewOfFil
   </div>
 
   <div class="card">
-    <h3>关键 Windows API（三方案共有）</h3>
+    <h3>关键 Windows API（所有方案共有）</h3>
     <div class="code-block">
-<span class="comment">// ═══ 启动初始化（三方案均需执行） ═══</span>
+<span class="comment">// ═══ 启动初始化（所有方案均需执行） ═══</span>
 <span class="comment">// ① 分析空闲位图</span>
 <span class="type">DWORD</span> bytesReturned;
 <span class="func">DeviceIoControl</span>(hVolume, <span class="string">FSCTL_GET_VOLUME_BITMAP</span>, ...);
@@ -936,7 +1086,147 @@ mappedView = (<span class="type">uint8_t</span>*)<span class="func">MapViewOfFil
 <span class="func">LockFileEx</span>(hFile, LOCKFILE_EXCLUSIVE_LOCK, <span class="string">0</span>, totalSize, ...);
 
 <span class="comment">// ═══ 以上步骤完成后，文件物理布局永不变化 ═══</span>
-<span class="comment">// 三种方案的差异仅在后续的「写入方式」</span></div>
+<span class="comment">// 各方案的差异仅在后续的「写入方式」</span></div>
+  </div>
+</section>
+
+<hr class="section-divider">
+
+<!-- ================================================================================== -->
+<!-- 方案四 -->
+<!-- ================================================================================== -->
+<section id="plan4" class="section">
+  <h2 class="section-title">方案四：预分配 + 直接 I/O 环形缓冲区 <span class="badge-rec">数据库经典</span></h2>
+  <p class="section-subtitle">预分配消除元数据抖动 + 直接 I/O 绕过 Page Cache → 零 CPU 拷贝 + 零运行时延迟抖动</p>
+</section>
+
+<section id="plan4-principle" class="section">
+  <div class="card">
+    <h3>方案四特有设计</h3>
+    <div class="callout callout-info">
+      <strong>启动碎片整理</strong>为所有方案共有机制，详见<a href="#startup-defrag" style="color:var(--primary);">启动碎片整理章节</a>。以下仅描述方案四的独特设计。
+    </div>
+
+    <h4>1. 核心思想：预分配 + 直接 I/O 的组合拳</h4>
+    <p>方案四将 <strong>预分配（Pre-allocation）</strong> 和 <strong>直接 I/O（Direct I/O, O_DIRECT）</strong> 组合使用，这是 MySQL InnoDB、Oracle 等主流数据库的经典做法。</p>
+    <div class="bg-knowledge-grid" style="margin-top:16px;">
+      <div class="bg-card" style="border-left:4px solid var(--success);">
+        <h4>预分配做的事</h4>
+        <p>通过 <code>SetFileValidData</code> / <code>fallocate</code> 一次性占好连续磁盘空间，建立物理块和元数据的映射。之后的写入不再触发块分配、位图更新、inode 扩展 → <strong>消除运行时延迟抖动</strong>。</p>
+      </div>
+      <div class="bg-card" style="border-left:4px solid var(--primary);">
+        <h4>直接 I/O 做的事</h4>
+        <p>通过 <code>FILE_FLAG_NO_BUFFERING</code> 打开文件，数据<strong>完全绕过 Page Cache</strong>，直接在用户 Buffer 和磁盘之间通过 DMA 传输 → <strong>零 CPU 拷贝 + 不污染缓存</strong>。</p>
+      </div>
+    </div>
+
+    <h4>2. 与方案二的本质区别</h4>
+    <p>方案二可以选择是否使用 <code>FILE_FLAG_NO_BUFFERING</code>，但方案四<strong>强制使用直接 I/O 并配合应用层自建缓存</strong>。两者在文件布局上相同（Header + BlockMeta + Block 区），差异体现在写入路径：</p>
+    <table style="margin:12px 0;">
+      <tr><th>对比维度</th><th>方案二（默认 Buffered I/O）</th><th>方案四（强制 Direct I/O + 自建缓存）</th></tr>
+      <tr><td>写入 API</td><td><code>WriteFile</code> 经过 Page Cache</td><td><code>WriteFile</code> + <code>FILE_FLAG_NO_BUFFERING</code>，绕过 Page Cache</td></tr>
+      <tr><td>CPU 拷贝</td><td>2 次（用户→Page Cache→磁盘）</td><td class="best">0 次（DMA 直传）</td></tr>
+      <tr><td>缓存管理</td><td>内核自动管理</td><td>应用自建 LRU 缓存</td></tr>
+      <tr><td>地址对齐</td><td>无要求</td><td>Buffer 起始地址、偏移量、大小均需扇区对齐（通常 512B）</td></tr>
+      <tr><td>Page Cache 污染</td><td>会污染（大文件挤走热数据）</td><td class="best">不会</td></tr>
+      <tr><td>适用场景</td><td>通用写入</td><td>自建缓存的大型应用</td></tr>
+    </table>
+
+    <h4>3. 应用层缓存设计</h4>
+    <p>由于直接 I/O 完全绕过 Page Cache，方案四需要应用自己实现缓存层来避免每次都读磁盘：</p>
+    <div class="layer-stack">
+      <div class="layer-item">
+        <strong>① 写入缓冲（Write Buffer）</strong>
+        <div class="layer-desc">积累 N 张图像后才触发一次 DMA 写入，减少磁盘 I/O 次数。缓冲大小 = 扇区大小的整数倍。</div>
+      </div>
+      <div class="layer-item">
+        <strong>② 读取缓存（LRU Cache）</strong>
+        <div class="layer-desc">最近读取的 Block 缓存在用户态内存中，避免重复的磁盘 DMA。缓存上限由可用 RAM 决定。</div>
+      </div>
+      <div class="layer-item">
+        <strong>③ 预读（Read-Ahead）</strong>
+        <div class="layer-desc">读取 Block N 时，异步预读 Block N+1、N+2（顺序访问模式），隐藏磁盘延迟。</div>
+      </div>
+    </div>
+
+    <h4>4. 直接 I/O 的严格对齐要求</h4>
+    <p style="font-size:13px; color:var(--text-secondary);">使用 <code>FILE_FLAG_NO_BUFFERING</code> 时，以下三者必须都是<strong>磁盘扇区大小（通常 512 字节）的整数倍</strong>，否则 WriteFile/ReadFile 会失败：</p>
+    <table style="margin:12px 0; font-size:13px;">
+      <tr><th style="width:200px;">对齐项</th><th>要求</th><th>实现方式</th></tr>
+      <tr><td><strong>用户 Buffer 起始地址</strong></td><td>扇区大小对齐</td><td>使用 <code>_aligned_malloc(size, 512)</code> 分配</td></tr>
+      <tr><td><strong>文件读写偏移量</strong></td><td>扇区大小对齐</td><td>Block 偏移 = Header + Meta 区 + N × blockSize（设计时保证对齐）</td></tr>
+      <tr><td><strong>读写字节数</strong></td><td>扇区大小对齐</td><td>实际写入 = ceil(actualSize / 512) × 512，多余部分填零</td></tr>
+    </table>
+    <div class="callout callout-warning">
+      <strong>注意：</strong>虽然对齐要求增加了编程复杂度，但换来的是<strong>零 CPU 拷贝 + 零 Page Cache 污染</strong>。对长时间运行的图像存储系统，这个代价是值得的。
+    </div>
+
+    <h4>5. 关键 Windows API 调用链</h4>
+    <div class="code-block">
+<span class="comment">// ═══ 方案四：预分配 + 直接 I/O ═══</span>
+<span class="comment">// ① 创建文件，带 FILE_FLAG_NO_BUFFERING 标志</span>
+<span class="type">HANDLE</span> hFile = <span class="func">CreateFileW</span>(<span class="string">L"D:\\vehicle_images.dat"</span>,
+    GENERIC_READ | GENERIC_WRITE, <span class="string">0</span>, <span class="string">NULL</span>, CREATE_ALWAYS,
+    FILE_ATTRIBUTE_NORMAL | <span class="string">FILE_FLAG_NO_BUFFERING</span>,  <span class="comment">// 绕过 Page Cache</span>
+    <span class="string">NULL</span>);
+
+<span class="comment">// ② 预分配文件大小（瞬时完成，需 SE_MANAGE_VOLUME_NAME 特权）</span>
+<span class="func">SetFileValidData</span>(hFile, totalSize);
+<span class="comment">// 此时 NTFS 已完成所有块分配和元数据更新，后续写入零抖动</span>
+
+<span class="comment">// ③ 对齐分配用户态写入缓冲区</span>
+<span class="type">uint8_t</span>* alignedBuf = (<span class="type">uint8_t</span>*)<span class="func">_aligned_malloc</span>(blockSize, <span class="string">512</span>);
+
+<span class="comment">// ④ 准备写入数据（确保大小扇区对齐）</span>
+<span class="type">uint32_t</span> alignedLen = ((actualLen + <span class="string">511</span>) / <span class="string">512</span>) * <span class="string">512</span>;
+<span class="func">memcpy</span>(alignedBuf, imageData, actualLen);
+<span class="func">memset</span>(alignedBuf + actualLen, <span class="string">0</span>, alignedLen - actualLen);  <span class="comment">// 尾部填零</span>
+
+<span class="comment">// ⑤ 直接 I/O 写入（DMA 直传，无 CPU 拷贝，不经过 Page Cache）</span>
+<span class="type">uint64_t</span> blockOffset = HEADER_SIZE + metaSize + writeCursor * blockSize;
+<span class="func">SetFilePointerEx</span>(hFile, blockOffset, ...);
+<span class="func">WriteFile</span>(hFile, alignedBuf, alignedLen, &written, <span class="string">NULL</span>);
+<span class="comment">// → WriteFile 返回时数据已通过 DMA 写入磁盘</span>
+
+<span class="comment">// ⑥ 更新元数据（Header + BlockMeta 也需要对齐写入）</span>
+<span class="func">SetFilePointerEx</span>(hFile, <span class="string">0</span>, ...);
+<span class="func">WriteFile</span>(hFile, alignedMetaBuf, <span class="string">4096</span>, ...);
+
+<span class="comment">// ⑦ 释放对齐缓冲区</span>
+<span class="func">_aligned_free</span>(alignedBuf);</div>
+  </div>
+</section>
+
+<section id="plan4-eval" class="section">
+  <div class="card">
+    <h3>方案评估</h3>
+    <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px;">
+      启动碎片整理、三层空间隔离、单文件句柄、MFT 开销等为<a href="#startup-defrag" style="color:var(--primary);">所有方案共有优势</a>，以下仅列方案四独有的优缺点。
+    </p>
+    <div style="display:flex; gap:20px; flex-wrap:wrap;">
+      <div style="flex:1; min-width:250px;">
+        <h4><span class="tag tag-green">独特优点</span></h4>
+        <ul style="font-size:14px; padding-left:20px;">
+          <li><strong>零 CPU 拷贝</strong>：数据通过 DMA 直传，完全释放 CPU 算力</li>
+          <li><strong>零 Page Cache 污染</strong>：大文件写入不会挤走其他进程的热数据</li>
+          <li><strong>零运行时元数据抖动</strong>：预分配消除了边写边分配带来的延迟毛刺</li>
+          <li><strong>写入延迟可预测</strong>：DMA 传输时间稳定，不受内核缓存策略影响</li>
+          <li><strong>继承方案二变长存储优势</strong>：空间利用率 ~99%</li>
+        </ul>
+      </div>
+      <div style="flex:1; min-width:250px;">
+        <h4><span class="tag tag-red">独特缺点</span></h4>
+        <ul style="font-size:14px; padding-left:20px;">
+          <li><strong>编程复杂度高</strong>：必须处理扇区对齐，所有读写大小必须是 512 的倍数</li>
+          <li><strong>需自建缓存</strong>：失去 Page Cache 的自动预读和缓存功能，应用必须自己实现 LRU</li>
+          <li><strong>小 I/O 性能差</strong>：每次 WriteFile 都触发一次 DMA，小数据批量写入时需要自己合并缓冲</li>
+          <li><strong>单点故障</strong>：单文件损坏则全部数据丢失</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout callout-info" style="margin-top:16px;">
+      <strong>适用场景判断：</strong>如果你的系统需要长期高负载运行（如 7×24 连续写入），且对延迟抖动敏感，方案四是值得投入的。如果系统是间歇性写入且负载不高，方案三的 mmap 更简单实用。
+    </div>
   </div>
 </section>
 
@@ -946,26 +1236,162 @@ mappedView = (<span class="type">uint8_t</span>*)<span class="func">MapViewOfFil
 <!-- 方案对比 -->
 <!-- ================================================================================== -->
 <section id="comparison" class="section">
-  <h2 class="section-title">三方案综合对比</h2>
+  <h2 class="section-title">四方案综合对比</h2>
 
   <div style="overflow-x:auto;">
   <table class="comparison-table">
     <thead>
-      <tr><th>对比维度</th><th>方案一：交错布局 + WriteFile</th><th>方案二：两区布局 + WriteFile</th><th class="highlight-col">方案三：两区布局 + 内存映射（推荐）</th></tr>
+      <tr><th>对比维度</th><th>方案一：交错布局 + WriteFile</th><th>方案二：两区布局 + WriteFile</th><th class="highlight-col">方案三：两区布局 + 内存映射（推荐）</th><th>方案四：预分配 + 直接 I/O</th></tr>
     </thead>
     <tbody>
-      <tr><td><strong>内部文件布局</strong></td><td>Header + Block/Index 交错区</td><td>Header + BlockMeta 区 + Block 区</td><td class="best">同方案二</td></tr>
-      <tr><td><strong>文件数量 / MFT</strong></td><td colspan="3" style="text-align:center;color:var(--text-secondary);">三方案一致：1 个文件，1 条 MFT 记录（~1KB），启动碎片整理为共有机制</td></tr>
-      <tr><td><strong>写入方式</strong></td><td>WriteFile ×2（数据+Index连续写→Header）</td><td>WriteFile ×2（数据→Header+Meta）</td><td class="best">一次 memcpy（零拷贝）</td></tr>
-      <tr><td><strong>用户态↔内核态切换</strong></td><td>每次写入约 4 次</td><td>每次写入约 4 次</td><td class="best">0 次（写入时）</td></tr>
-      <tr><td><strong>变长存储</strong></td><td>❌ 固定 Block 大小</td><td class="best">✅ 支持（≤ block_size）</td><td class="best">✅ 支持（≤ block_size）</td></tr>
-      <tr><td><strong>空间利用率</strong></td><td>~70%（固定块浪费）</td><td class="best">~99%</td><td class="best">~99%</td></tr>
-      <tr><td><strong>崩溃恢复</strong></td><td class="best">✅ sequence 扫描自愈</td><td>✅ Header 恢复</td><td>✅ Header 恢复</td></tr>
-      <tr><td><strong>32 位兼容性</strong></td><td>✅ 无限制</td><td>✅ 无限制</td><td>⚠️ 需分段映射</td></tr>
-      <tr><td><strong>API 简洁度</strong></td><td>中（多次 Seek+Write）</td><td>中（较少 Seek）</td><td class="best">高（memcpy 即写入）</td></tr>
-      <tr><td><strong>推荐场景</strong></td><td>需要 sequence 审计 / 合规场景</td><td>32 位系统 / 高空间利用率</td><td class="best">64 位生产环境（最优性能）</td></tr>
+      <tr><td><strong>内部文件布局</strong></td><td>Header + Block/Index 交错区</td><td>Header + BlockMeta 区 + Block 区</td><td class="best">同方案二</td><td>同方案二</td></tr>
+      <tr><td><strong>文件数量 / MFT</strong></td><td colspan="4" style="text-align:center;color:var(--text-secondary);">四方案一致：1 个文件，1 条 MFT 记录（~1KB），启动碎片整理为共有机制</td></tr>
+      <tr><td><strong>I/O 方式</strong></td><td>普通 Buffered I/O</td><td>普通 Buf I/O（可选 Direct）</td><td class="best">mmap 内存映射</td><td class="best">预分配 + Direct I/O</td></tr>
+      <tr><td><strong>CPU 拷贝次数</strong></td><td>2 次</td><td>2 次（可选 0 次）</td><td class="best">0 次</td><td class="best">0 次</td></tr>
+	      <tr><td><strong>用户态↔内核态切换</strong></td><td>每次写入约 4 次</td><td>每次写入约 4 次</td><td class="best">0 次（写入时）</td><td>每次写入约 2 次（WriteFile 调用）</td></tr>
+      <tr><td><strong>变长存储</strong></td><td>❌ 固定 Block 大小</td><td class="best">✅ 支持（≤ block_size）</td><td class="best">✅ 支持（≤ block_size）</td><td class="best">✅ 支持（≤ block_size）</td></tr>
+      <tr><td><strong>空间利用率</strong></td><td>~70%（固定块浪费）</td><td class="best">~99%</td><td class="best">~99%</td><td class="best">~99%</td></tr>
+      <tr><td><strong>崩溃恢复</strong></td><td class="best">✅ sequence 扫描自愈</td><td>✅ Header 恢复</td><td>✅ Header 恢复</td><td>✅ Header 恢复</td></tr>
+      <tr><td><strong>地址对齐要求</strong></td><td>❌ 无</td><td>❌ 无（Direct 时需对齐）</td><td>❌ 无</td><td>⚠️ Buffer/偏移/大小均需 512B 对齐</td></tr>
+	      <tr><td><strong>自建缓存需求</strong></td><td>❌ 不需要</td><td>❌ 不需要（Direct 时需要）</td><td>❌ 不需要（OS 管理）</td><td class="best">✅ 需要（应用完全掌控）</td></tr>
+	      <tr><td><strong>Page Cache 污染</strong></td><td>⚠️ 会污染</td><td>⚠️ 会（Direct 时不污染）</td><td>⚠️ 会（依赖 Page Cache）</td><td class="best">✅ 不污染</td></tr>
+      <tr><td><strong>API 简洁度</strong></td><td>中（多次 Seek+Write）</td><td>中（较少 Seek）</td><td class="best">高（memcpy 即写入）</td><td>低（需处理对齐、自建缓存）</td></tr>
+      <tr><td><strong>推荐场景</strong></td><td>需要 sequence 审计 / 合规场景</td><td>32 位系统 / 高空间利用率</td><td class="best">64 位生产环境（最优性能）</td><td>7×24 高负载 / 零延迟抖动要求</td></tr>
     </tbody>
   </table>
+  </div>
+</section>
+
+<!-- ================================================================================== -->
+<!-- 方案三 vs 方案四深度对比 -->
+<!-- ================================================================================== -->
+<section id="io-comparison" class="section">
+  <h2 class="section-title">方案三 vs 方案四深度对比：内存映射 vs 直接 I/O</h2>
+  <p class="section-subtitle">从存储耗时稳定性、资源占用、存储速度三个维度拆解两种高性能方案的取舍</p>
+
+  <div class="card">
+    <p>从存储耗时的稳定性、资源占用和存储速度这三个维度综合来看，<strong>"预分配+直接IO"方案在工程上通常表现出更好的性能可控性，而"预分配+文件映射"方案则在特定读密集场景下拥有终极的读取速度</strong>。没有绝对的优劣，关键看你的取舍。下面详细拆解。</p>
+  </div>
+
+  <!-- 维度一：存储耗时的稳定性 -->
+  <div class="card">
+    <h3>维度一：存储耗时的稳定性</h3>
+    <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px;">这是两种方案差异最大的地方。</p>
+
+    <div style="display:flex; gap:20px; flex-wrap:wrap;">
+      <div style="flex:1; min-width:280px; background:#fef2f2; border-radius:8px; padding:16px; border-left:4px solid var(--danger);">
+        <h4><span class="tag tag-red">预分配+文件映射</span> — 非常不稳定，充满长尾延迟</h4>
+        <ul style="font-size:13px; padding-left:16px; margin-top:8px;">
+          <li><strong>写入路径</strong>：修改只是"脏"了内存页，真实磁盘写入由内核后台线程异步刷盘。意味着你<strong>完全无法预测</strong>本次内存写入对应的磁盘 I/O 会在何时发生、耗时多少。当系统积累了大量脏页，后台回写会突然引发大规模 I/O，直接阻塞前台操作，导致瞬间的卡顿。</li>
+          <li style="margin-top:6px;"><strong>读取路径</strong>：首次读取任意地址都会触发<strong>缺页中断</strong>，需要从磁盘加载数据，延迟极高；后续重复读取则是纯内存访问，延迟极低。这种"冷热不均"导致延迟分布呈典型的双峰甚至多峰状态，非常不稳定。</li>
+          <li style="margin-top:6px;"><strong>错误处理</strong>：写入错误通过 <code>SIGBUS</code> 信号异步抛出，极难优雅处理，可能直接导致进程崩溃。</li>
+        </ul>
+      </div>
+      <div style="flex:1; min-width:280px; background:#f0fdf4; border-radius:8px; padding:16px; border-left:4px solid var(--success);">
+        <h4><span class="tag tag-green">预分配+直接 I/O</span> — 高度稳定，延迟可预测</h4>
+        <ul style="font-size:13px; padding-left:16px; margin-top:8px;">
+          <li><strong>路径完全由应用控制</strong>：每一次读写都由你显式发起，你能直接测量出真实的磁盘响应时间。</li>
+          <li style="margin-top:6px;"><strong>无后台干扰</strong>：绕过页面缓存，不存在内核脏页刷盘导致的突发 I/O 阻塞。只要控制好 I/O 队列深度，就能获得非常平滑的延迟曲线，满足 P99、P999 延迟的严格 SLA 要求。</li>
+          <li style="margin-top:6px;"><strong>错误清晰</strong>：所有 I/O 错误通过返回值同步返回，可以轻松地重试或处理。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout callout-info" style="margin-top:16px;">
+      <strong>结论：</strong>追求可预测的、低长尾延迟的稳定性能，直接 I/O 完胜。
+    </div>
+  </div>
+
+  <!-- 维度二：资源占用 -->
+  <div class="card">
+    <h3>维度二：资源占用</h3>
+    <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px;">直接 I/O 在资源控制上更精细、更节省核心资源。</p>
+
+    <div style="overflow-x:auto;">
+    <table class="comparison-table">
+      <thead>
+        <tr><th>资源类型</th><th>预分配+文件映射</th><th>预分配+直接 I/O</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>虚拟地址空间</strong></td>
+          <td><span class="tag tag-red">消耗巨大</span>。映射 1TB 文件需 1TB 连续地址空间。</td>
+          <td><span class="tag tag-green">消耗极低</span>。仅需应用层缓冲区的地址空间，大小可配（如几百 MB）。</td>
+        </tr>
+        <tr>
+          <td><strong>物理内存</strong></td>
+          <td><span class="tag tag-red">不可控占用</span>。热点数据会挤占页面缓存，可能造成系统级缓存污染。被"脏"掉但未刷盘的数据页也占用内存。</td>
+          <td><span class="tag tag-green">精确可控</span>。应用自建缓存池，使用多少内存由你决定，绝不会意外占用多余内存或污染全局缓存。</td>
+        </tr>
+        <tr>
+          <td><strong>页表内存</strong></td>
+          <td><span class="tag tag-red">开销显著</span>。完全访问 1TB 文件，仅页表就需消耗约 2GB 物理内存。</td>
+          <td><span class="tag tag-green">基本可忽略</span>。仅为应用缓冲区维护页表，开销极小。</td>
+        </tr>
+        <tr>
+          <td><strong>CPU 开销</strong></td>
+          <td><span class="tag tag-yellow">访存低，缺页高</span>。命中时是极快的普通访存指令；但缺页中断处理、TLB 未命中遍历页表会消耗 CPU。</td>
+          <td><span class="tag tag-yellow">系统调用开销</span>。每次 I/O 需系统调用，有一定 CPU 成本，但可通过异步 I/O 和批量提交有效分摊。</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+    <div class="callout callout-info" style="margin-top:16px;">
+      <strong>结论：</strong>直接 I/O 在内存、地址空间等核心资源上更节俭，且完全由应用掌控，是数据库等基础软件的首选。
+    </div>
+  </div>
+
+  <!-- 维度三：存储速度 -->
+  <div class="card">
+    <h3>维度三：存储速度</h3>
+    <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px;">需要分场景讨论，因为两种方案利用了不同的优势。</p>
+
+    <div style="display:flex; gap:16px; flex-wrap:wrap;">
+      <!-- 读速度 -->
+      <div style="flex:1; min-width:260px; background:#f8fafc; border-radius:8px; padding:16px; border:1px solid var(--border);">
+        <h4>📖 读速度</h4>
+        <ul style="font-size:13px; padding-left:16px; margin-top:8px;">
+          <li><strong>文件映射：</strong>如果数据<strong>可缓存且访问有局部性</strong>（如反复读取索引的热点部分），它能提供<strong>接近内存带宽的终极读速度</strong>，远超任何 <code>read</code> 调用。因为它直接省去了系统调用和数据拷贝。</li>
+          <li style="margin-top:6px;"><strong>直接 I/O：</strong>即使数据很热，每次读取也需系统调用和 DMA 拷贝，速度不如文件映射的内存访问。<strong>但</strong>它能避免大文件访问时的缓存污染，防止整体性能退化。</li>
+        </ul>
+      </div>
+      <!-- 写速度 -->
+      <div style="flex:1; min-width:260px; background:#f8fafc; border-radius:8px; padding:16px; border:1px solid var(--border);">
+        <h4>✏️ 写速度</h4>
+        <ul style="font-size:13px; padding-left:16px; margin-top:8px;">
+          <li><strong>文件映射：</strong>写入操作只是内存修改，感觉很快，但真正的磁盘写入由内核异步完成。这种"假速度"隐藏了风险，且易造成写放大（修改 1 字节也要写整个 4KB 页）。</li>
+          <li style="margin-top:6px;"><strong>直接 I/O：</strong>写入速度就是真实的磁盘写入速度，结合异步 I/O 和批量提交，可以非常高效地榨干磁盘带宽，且行为完全透明。</li>
+        </ul>
+      </div>
+      <!-- 超大文件与随机访问 -->
+      <div style="flex:1; min-width:260px; background:#f8fafc; border-radius:8px; padding:16px; border:1px solid var(--border);">
+        <h4>🗄️ 超大文件与随机访问</h4>
+        <ul style="font-size:13px; padding-left:16px; margin-top:8px;">
+          <li><strong>文件映射：</strong>在处理超大文件（如 1TB）的随机访问时，会遭遇严重的<strong>TLB 抖动</strong>，频繁的页表遍历会使性能急剧下降。</li>
+          <li style="margin-top:6px;"><strong>直接 I/O：</strong>性能不会因文件变大而衰退，始终由磁盘硬件能力决定。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout callout-info" style="margin-top:16px;">
+      <strong>结论：</strong>只论峰值读速度，文件映射是冠军；论可预测的、稳态的写入速度以及大文件随机访问性能，直接 I/O 更优。
+    </div>
+  </div>
+
+  <!-- 最终选型建议 -->
+  <div class="card" style="border-left:4px solid var(--success);">
+    <h3>最终选型建议</h3>
+    <div style="display:flex; gap:20px; flex-wrap:wrap; margin-top:12px;">
+      <div style="flex:1; min-width:280px;">
+        <h4><span class="tag tag-green">选预分配+直接 I/O</span></h4>
+        <p style="font-size:13px; margin-top:8px;">如果你在构建<strong>数据库、消息队列、分布式存储引擎</strong>等对延迟稳定性、资源控制和数据一致性有严格要求的系统。这是更专业、更稳妥的选择。</p>
+      </div>
+      <div style="flex:1; min-width:280px;">
+        <h4><span class="tag tag-blue">选预分配+文件映射</span></h4>
+        <p style="font-size:13px; margin-top:8px;">如果你的应用是<strong>搜索引擎、读多写少的 KV 存储、只读数据集分析</strong>，且数据量能被物理内存较好地容纳，你能驾驭其复杂性，追求极致读取性能。或者你需要在多进程间零拷贝共享大型只读数据。</p>
+      </div>
+    </div>
+    <div class="callout callout-warning" style="margin-top:16px;">
+      <strong>一句话概括：</strong>直接 I/O 赢在"稳"和"省"，文件映射赢在"快"（特定场景下）。
+    </div>
   </div>
 </section>
 
@@ -973,23 +1399,82 @@ mappedView = (<span class="type">uint8_t</span>*)<span class="func">MapViewOfFil
 <section id="recommendation" class="section">
   <h2 class="section-title">最终建议</h2>
 
+<section id="scenario-guide" class="section">
+  <!-- ===== 场景化选型指南 ===== -->
+  <div class="card" style="border-left:4px solid var(--warning);">
+    <h3>场景化选型指南</h3>
+    <p style="font-size:13px; color:var(--text-secondary); margin-bottom:16px;">
+      没有放之四海皆最优的方案。根据你的<strong>写入频率、读取频率、文件大小</strong>三个核心变量来选择：
+    </p>
+
+    <table style="margin:12px 0; font-size:14px;">
+      <tr><th style="width:30%;">你的场景特征</th><th style="width:20%;">推荐方案</th><th>理由</th></tr>
+
+      <tr>
+        <td><strong>频繁写 + 低频读<br>文件 &lt; 几百 GB</strong></td>
+        <td><span class="badge-rec">方案三</span> mmap</td>
+        <td style="font-size:13px;">
+          写入仅一次 <code>memcpy</code>，零系统调用，延迟最低。读低频让 mmap 的两个短板（Page Cache 污染、缺页中断延迟）在此场景下不构成实际问题。
+        </td>
+      </tr>
+
+      <tr>
+        <td><strong>频繁写 + 低频读<br>文件 &gt; 1TB</strong></td>
+        <td><span class="badge-rec">方案四</span> 预分配 + 直接 I/O</td>
+        <td style="font-size:13px;">
+          文件超过 1TB 时，mmap 的页表开销巨大（即便 2MB 大页也有 50 万+ 条目），必须用滑动窗口分段映射，失去"指针直访"的简洁性。直接 I/O 不映射、不过 Page Cache，文件再大也无所谓——每次只读写当前 Block 的几十 KB，<strong>1TB 和 1GB 的单次写入延迟完全相同</strong>。MySQL InnoDB 的 ibdata1 动辄几百 GB~几 TB，用的就是这个模式。
+        </td>
+      </tr>
+
+      <tr>
+        <td><strong>频繁写 + 低频读 + 超大文件<br>且希望降低实现复杂度</strong></td>
+        <td><span class="tag tag-green">方案四 简化版</span></td>
+        <td style="font-size:13px;">
+          读频率低 = 可以<strong>省掉自建 LRU 缓存</strong>。只需保留写入缓冲（攒 N 张图一次 DMA 写入），核心代码量跟方案二差不多，额外处理仅三个点：<code>_aligned_malloc</code> + <code>FILE_FLAG_NO_BUFFERING</code> + 扇区对齐。
+        </td>
+      </tr>
+
+      <tr>
+        <td><strong>需要全局 sequence 审计<br>或 32 位系统</strong></td>
+        <td><span class="tag tag-green">方案一</span> / <span class="tag tag-blue">方案二</span></td>
+        <td style="font-size:13px;">
+          需要精确追踪历史数据 → 方案一的 sequence + Index CRC 扫描最完善。<br>
+          32 位系统 → 方案二的 WriteFile 无虚拟地址空间限制。
+        </td>
+      </tr>
+    </table>
+  </div>
+</section>
+
   <div class="card" style="border-left:4px solid var(--success);">
     <h3>首选：方案三（单文件 + 内存映射）</h3>
-    <p>在 <strong>64 位 Windows</strong> 上，这是写入性能最优方案。核心优势：</p>
+    <p>在 <strong>64 位 Windows、文件不超过几百 GB</strong> 的场景下，这是写入性能最优方案。核心优势：</p>
     <ul style="font-size:14px; padding-left:20px; margin:12px 0;">
       <li>写入一张图像仅需 <strong>1 次 memcpy</strong>，无系统调用、无内核切换</li>
       <li>OS 的 Lazy Writer 异步刷盘，不阻塞业务线程</li>
       <li>通过 <code>FlushViewOfFile</code> 可在关键节点强制同步</li>
+      <li><strong>注意：</strong>如果预分配文件超过 1TB，请参考上方选型表改用方案四</li>
+    </ul>
+  </div>
+
+  <div class="card" style="margin-top:12px; border-left:4px solid var(--primary);">
+    <h3>高性能场景：方案四（预分配 + 直接 I/O）</h3>
+    <p>如果你的系统是 <strong>7×24 高负载连续运行</strong>，且对延迟抖动零容忍，方案四是更优选择：</p>
+    <ul style="font-size:14px; padding-left:20px; margin:12px 0;">
+      <li>预分配 + 直接 I/O 是 MySQL InnoDB、Oracle 等数据库的经典做法，工业级验证</li>
+      <li>零 CPU 拷贝 + 零 Page Cache 污染 + 零元数据抖动 → <strong>三重保障</strong></li>
+      <li>应用自建缓存让你<strong>完全掌控</strong>数据一致性，不依赖内核的回写策略</li>
+      <li>代价是编程复杂度显著增加（扇区对齐、自建 LRU、预读逻辑）</li>
     </ul>
   </div>
 
   <div class="card" style="margin-top:12px;">
     <h4>方案一的价值：防碎片最彻底</h4>
-    <p>方案一虽然写入性能不如方案三（WriteFile vs memcpy），但其<strong>启动时的主动碎片验证与强制整理机制</strong>是其他两个方案不具备的：</p>
+    <p>方案一虽然写入性能不如方案三/四（WriteFile vs memcpy/直接 I/O），但其<strong>启动时的主动碎片验证与强制整理机制</strong>是其他方案不具备的：</p>
     <ul style="font-size:14px; padding-left:20px; margin:12px 0;">
-      <li>在 HDD 严重碎片化的环境中，方案二/三的「NTFS 尽力分配」可能仍然产生碎片化的大文件</li>
+      <li>在 HDD 严重碎片化的环境中，方案二/三/四的「NTFS 尽力分配」可能仍然产生碎片化的大文件</li>
       <li>方案一通过 FSCTL_GET_VOLUME_BITMAP → FSCTL_GET_RETRIEVAL_POINTERS → FSCTL_MOVE_FILE 三步确保物理连续性</li>
-      <li><strong>理想组合：</strong>三种方案均已内置启动碎片整理。方案三的内存映射写入 + 启动整理 = 防碎片确定性与极致写入性能兼得</li>
+      <li><strong>理想组合：</strong>四种方案均已内置启动碎片整理。方案三的内存映射写入（或方案四的直接 I/O）+ 启动整理 = 防碎片确定性与极致写入性能兼得</li>
     </ul>
   </div>
 
@@ -1004,6 +1489,7 @@ mappedView = (<span class="type">uint8_t</span>*)<span class="func">MapViewOfFil
         <span class="type">uint64_t</span>     block_size;    <span class="comment">// 每块最大字节</span>
         <span class="type">uint32_t</span>     block_count;   <span class="comment">// 块总数</span>
         <span class="type">bool</span>         use_mapping;   <span class="comment">// 是否使用内存映射</span>
+        <span class="type">bool</span>         use_direct_io; <span class="comment">// 是否使用直接 I/O（绕过 Page Cache）</span>
     };
 
     <span class="comment">// 初始化：创建/打开文件，分配空间，可选映射</span>
@@ -1683,6 +2169,66 @@ function easeInOut(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; }
     });
   });
 })();
+
+// ===== 编辑模式切换 =====
+let isEditing = false;
+
+function toggleEdit() {
+  isEditing = !isEditing;
+  const main = document.querySelector('.main');
+  const toggle = document.getElementById('editToggle');
+  const toolbar = document.getElementById('editToolbar');
+
+  if (isEditing) {
+    main.contentEditable = 'true';
+    document.body.classList.add('editing');
+    toggle.classList.add('active');
+    toggle.textContent = '✕';
+    toolbar.classList.add('visible');
+  } else {
+    main.contentEditable = 'false';
+    document.body.classList.remove('editing');
+    toggle.classList.remove('active');
+    toggle.textContent = '✎';
+    toolbar.classList.remove('visible');
+  }
+}
+
+function saveEdit() {
+  const main = document.querySelector('.main');
+  // 移除 contentEditable 属性以获得干净的 HTML
+  const wasEditing = isEditing;
+  if (wasEditing) {
+    main.contentEditable = 'false';
+  }
+
+  const htmlContent = document.documentElement.outerHTML;
+
+  if (wasEditing) {
+    main.contentEditable = 'true';
+  }
+
+  // 下载编辑后的 HTML 文件
+  const blob = new Blob(['<!DOCTYPE html>\n' + htmlContent], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '磁盘存储多方案.html';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  // 短暂反馈
+  const saveBtn = document.querySelector('.save-btn');
+  const origText = saveBtn.textContent;
+  saveBtn.textContent = '✅ 已下载!';
+  saveBtn.style.background = '#10b981';
+  setTimeout(() => {
+    saveBtn.textContent = origText;
+    saveBtn.style.background = '';
+  }, 1500);
+}
 </script>
 
 </body>
