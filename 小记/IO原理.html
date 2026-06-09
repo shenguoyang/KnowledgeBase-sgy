@@ -166,14 +166,31 @@
   }
   .flow-toolbar > span:first-child { font-weight:600; font-size:0.92em; }
   .flow-toolbar button {
-    background: var(--surface); border:1px solid var(--border);
-    color: var(--text); padding:5px 12px; border-radius:5px;
+    background: rgba(255,255,255,0.06);
+    border:1px solid var(--border);
+    color: var(--dim);
+    padding:6px 14px; border-radius:5px;
     cursor:pointer; font-size:0.82em; font-family:inherit;
     transition: all 0.18s;
+    white-space: nowrap;
   }
-  .flow-toolbar button:hover { border-color: var(--accent); }
+  .flow-toolbar button:hover {
+    border-color: var(--accent);
+    color: var(--text);
+    background: rgba(88,166,255,0.1);
+  }
   .flow-toolbar button.running, .flow-toolbar button.active-sub {
     background: var(--accent); color:#fff; border-color:var(--accent);
+  }
+
+  /* ── Overview sub-tab button tweaks ── */
+  #btnOverviewBuf, #btnOverviewDirect, #btnOverviewMmap {
+    font-weight: 500;
+  }
+  #btnOverviewBuf.active-sub, #btnOverviewDirect.active-sub, #btnOverviewMmap.active-sub {
+    position: relative;
+    z-index: 1;
+    box-shadow: 0 0 12px rgba(88,166,255,0.3);
   }
   .flow-toolbar .step-info { margin-left:auto; color: var(--dim); font-size:0.82em; }
   .flow-canvas {
@@ -277,6 +294,136 @@
   @media (min-width: 769px) {
     .sidebar-toggle { display:none; }
   }
+
+  /* ═══════════ EDIT MODE ═══════════ */
+  .edit-toolbar {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 1000;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 12px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    transition: all 0.2s;
+  }
+  .edit-toolbar button {
+    display: flex; align-items: center; gap: 5px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 0.82em;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.18s;
+    white-space: nowrap;
+  }
+  .edit-toolbar button:hover { border-color: var(--accent); }
+  .edit-toolbar .edit-btn {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .edit-toolbar .edit-btn:hover {
+    background: var(--accent);
+    color: #fff;
+  }
+  .edit-toolbar .save-btn {
+    background: var(--green);
+    border-color: var(--green);
+    color: #fff;
+    display: none;
+  }
+  .edit-toolbar .save-btn:hover { opacity: 0.85; }
+  .edit-toolbar .cancel-btn {
+    background: var(--red);
+    border-color: var(--red);
+    color: #fff;
+    display: none;
+  }
+  .edit-toolbar .cancel-btn:hover { opacity: 0.85; }
+  .edit-toolbar .download-btn {
+    border-color: var(--orange);
+    color: var(--orange);
+    display: none;
+  }
+  .edit-toolbar .download-btn:hover {
+    background: var(--orange);
+    color: #fff;
+  }
+
+  /* Editing state */
+  .edit-toolbar.editing .edit-btn { display: none; }
+  .edit-toolbar.editing .save-btn,
+  .edit-toolbar.editing .cancel-btn,
+  .edit-toolbar.editing .download-btn { display: flex; }
+
+  .main-content.editing {
+    outline: 2px dashed var(--accent);
+    outline-offset: -2px;
+  }
+  .main-content.editing .section {
+    position: relative;
+    border: 1px dashed transparent;
+    border-radius: 8px;
+    padding: 20px 22px 42px;
+    transition: border-color 0.2s;
+  }
+  .main-content.editing .section:hover {
+    border-color: rgba(88,166,255,0.3);
+    background: rgba(88,166,255,0.015);
+  }
+  .main-content.editing .section::after {
+    content: '✏️ 可编辑区域';
+    position: absolute;
+    bottom: 8px;
+    right: 14px;
+    font-size: 0.7em;
+    color: var(--dim);
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+  }
+  .main-content.editing .section:hover::after {
+    opacity: 0.6;
+  }
+  .main-content.editing .hero {
+    border: 1px dashed transparent;
+    border-radius: 8px;
+    transition: border-color 0.2s;
+  }
+  .main-content.editing .hero:hover {
+    border-color: rgba(88,166,255,0.3);
+  }
+  .edit-toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1001;
+    background: var(--green);
+    color: #fff;
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-size: 0.85em;
+    font-family: inherit;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    animation: toastIn 0.3s ease, toastOut 0.3s ease 1.7s forwards;
+    pointer-events: none;
+  }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+  @keyframes toastOut {
+    from { opacity: 1; transform: translateX(-50%) translateY(0); }
+    to   { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  }
 </style>
 </head>
 <body>
@@ -288,11 +435,11 @@
     <p>Windows 存储栈全景解析</p>
   </div>
   <div class="sidebar-group">基础</div>
-  <button class="sidebar-nav-btn active" data-tab="basics">
+  <button class="sidebar-nav-btn" data-tab="basics">
     <span class="nav-icon">🏁</span> 基础概念
   </button>
   <div class="sidebar-group">核心</div>
-  <button class="sidebar-nav-btn" data-tab="overview">
+  <button class="sidebar-nav-btn active" data-tab="overview">
     <span class="nav-icon">🗺️</span> 全景架构
   </button>
   <button class="sidebar-nav-btn" data-tab="flow">
@@ -318,13 +465,30 @@
 
 <!-- ═══════════════ MAIN CONTENT ═══════════════ -->
 <main class="main-content">
+
+<!-- ═══════════════ EDIT TOOLBAR ═══════════════ -->
+<div class="edit-toolbar" id="editToolbar">
+  <button class="edit-btn" onclick="toggleEditMode()" title="进入编辑模式">
+    ✏️ 编辑
+  </button>
+  <button class="save-btn" onclick="saveEdit()" title="保存修改">
+    💾 保存
+  </button>
+  <button class="cancel-btn" onclick="cancelEdit()" title="取消编辑">
+    ✖ 取消
+  </button>
+  <button class="download-btn" onclick="downloadHTML()" title="下载修改后的HTML文件">
+    📥 下载
+  </button>
+</div>
+
 <div class="hero">
   <h1>Windows <span>IO 原理</span> 全景解析</h1>
   <p>从用户态 write() 到磁盘物理扇区 —— 完整数据路径与关键数据结构</p>
 </div>
 
 <!-- ═══════════════ TAB 1: 基础概念 ═══════════════ -->
-<section class="section active" id="tab-basics">
+<section class="section" id="tab-basics">
 
 <h2 class="sec-title">🏁 存储基础概念</h2>
 
@@ -520,12 +684,14 @@
 </section>
 
 <!-- ═══════════════ TAB 2: 全景架构 ═══════════════ -->
-<section class="section" id="tab-overview">
+<section class="section active" id="tab-overview">
 <h2 class="sec-title">🗺️ Windows IO 栈分层架构</h2>
 <div class="flow-wrapper">
   <div class="flow-toolbar">
-    <span>IO 栈全景图</span>
-    <span style="color:var(--dim);font-size:0.8em;margin-left:8px;">— 悬停查看详情</span>
+    <button id="btnOverviewBuf" class="active-sub" onclick="showOverviewSub('buffered')" style="border-radius:6px 0 0 6px;font-size:0.9em;padding:7px 18px;">📦 缓存 IO</button>
+    <button id="btnOverviewDirect" onclick="showOverviewSub('direct')" style="border-radius:0;font-size:0.9em;padding:7px 18px;border-left:none;">⚡ 直接 IO</button>
+    <button id="btnOverviewMmap" onclick="showOverviewSub('mmap')" style="border-radius:0 6px 6px 0;font-size:0.9em;padding:7px 18px;border-left:none;">🗺️ 内存映射</button>
+    <span class="step-info" id="overviewDesc" style="margin-left:auto;font-size:0.88em;color:var(--accent);">缓冲区→系统缓存→磁盘，延迟写入</span>
   </div>
   <div class="flow-canvas" id="overviewCanvas"></div>
 </div>
@@ -778,9 +944,35 @@ function svgLabel(x,y,text,size=12,fill=C.dim) {
 }
 
 // ═══════════════════════════════════════════
-//  OVERVIEW SVG
+//  OVERVIEW SVG — Sub-tab dispatcher
 // ═══════════════════════════════════════════
-function drawOverview() {
+let currentOverview = 'buffered';
+function showOverviewSub(sub) {
+  currentOverview = sub;
+  const buttons = {
+    buffered: document.getElementById('btnOverviewBuf'),
+    direct: document.getElementById('btnOverviewDirect'),
+    mmap: document.getElementById('btnOverviewMmap'),
+  };
+  const descEl = document.getElementById('overviewDesc');
+  const descs = {
+    buffered: '缓冲区→系统缓存→磁盘，延迟写入',
+    direct: '用户缓冲→直接→磁盘，绕过系统缓存',
+    mmap: '进程地址空间↔文件映射，页异常驱动IO',
+  };
+  Object.entries(buttons).forEach(([k, btn]) => {
+    btn.classList.toggle('active-sub', k === sub);
+  });
+  if (descEl) descEl.textContent = descs[sub] || '';
+  const canvas = document.getElementById('overviewCanvas');
+  canvas.innerHTML = '';
+  if (sub === 'buffered') drawOverviewBuffered();
+  else if (sub === 'direct') drawOverviewDirect();
+  else if (sub === 'mmap') drawOverviewMmap();
+}
+
+// ── Buffered IO (original overview) ──
+function drawOverviewBuffered() {
   const W=1100, H=950;
   const svg = makeSvg(W,H);
   const g = el('g',{fontFamily:'"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif'});
@@ -905,6 +1097,305 @@ function drawOverview() {
     g.append(el('circle',{cx:lx,cy:legendY,r:6,fill:li.c}));
     g.append(txt(lx+14,legendY+5,li.l,11,C.dim,'start'));
   });
+  svg.append(g);
+  document.getElementById('overviewCanvas').appendChild(svg);
+}
+
+// ── Direct IO (FILE_FLAG_NO_BUFFERING) ──
+function drawOverviewDirect() {
+  const W=1100, H=720;
+  const svg = makeSvg(W,H);
+  const g = el('g',{fontFamily:'"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif'});
+  const rect=svgRect, txt=svgTxt, arrow=svgArrow, dashedArrow=svgDashedArrow, label=svgLabel;
+
+  const defs = el('defs');
+  defs.innerHTML=`<marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="${C.edge}"/></marker>`;
+  g.append(defs);
+
+  // ── User Space ──
+  g.append(rect(340,10,420,64,10,C.surface, C.user));
+  g.append(txt(550,38,'应用程序 (User Space / Ring 3)',14,C.user,'middle',true));
+
+  // App boxes: two-step setup
+  const appBox1 = rect(290,90,240,44,8,'rgba(88,166,255,0.08)',C.user);
+  g.append(appBox1); g.append(txt(410,108,'CreateFile(..., FILE_FLAG_NO_BUFFERING)',12,C.text));
+  g.append(txt(410,126,'必设: 缓冲区扇区对齐 + 扇区整数倍大小',10,C.dim));
+
+  const appBox2 = rect(560,90,240,44,8,'rgba(88,166,255,0.08)',C.user);
+  g.append(appBox2); g.append(txt(680,108,'WriteFile(hFile, buf, len, ...)',12,C.text));
+  g.append(txt(680,126,'直接传入用户态对齐缓冲区',10,C.dim));
+
+  g.append(arrow(410,134,410,170, C.user));
+  g.append(arrow(680,134,680,170, C.user));
+  g.append(label(470,152,'syscall',9,C.dim));
+  g.append(label(740,152,'syscall',9,C.dim));
+
+  // Kernel boundary
+  const kBox = rect(250,175,600,175,12,'rgba(163,113,247,0.04)',C.kernel);
+  kBox.setAttribute('stroke-dasharray','4 3'); g.append(kBox);
+  g.append(txt(300,195,'内核空间 (Ring 0)',12,C.kernel,'start',true));
+
+  // Inside kernel — No cache! Direct MDL creation
+  g.append(rect(290,210,260,42,6,'rgba(163,113,247,0.08)',C.kernel));
+  g.append(txt(420,224,'句柄解析: Handle → FILE_OBJECT',12,C.text));
+  g.append(txt(420,240,'ObReferenceObjectByHandle() · 访问权限检查',10,C.dim));
+
+  // ── The critical NO-CACHE fork ──
+  g.append(rect(590,210,230,42,8,'rgba(248,81,73,0.1)',C.red));
+  g.append(txt(705,224,'🚫 绕过系统缓存',12,C.red,'middle',true));
+  g.append(txt(705,240,'FILE_FLAG_NO_BUFFERING = 1',10,C.dim));
+
+  g.append(arrow(420,252,420,270,C.kernel));
+  g.append(arrow(705,252,705,270,C.kernel));
+
+  // IO Manager creates MDL directly
+  g.append(rect(290,270,530,42,8,'rgba(163,113,247,0.1)',C.kernel));
+  g.append(txt(555,284,'IO 管理器: 直接创建 MDL · 锁定用户缓冲区页面 (MmProbeAndLockPages)',12,C.text,'middle',true));
+  g.append(txt(555,302,'MDL 描述用户缓冲区的物理页 → 用户数据不复制到缓存，直接参与 DMA',10,C.dim));
+  g.append(arrow(555,312,555,350,C.kernel));
+  g.append(label(605,333,'构造 IRP_MJ_WRITE + MDL',10,C.dim));
+
+  // ── File System Layer ──
+  const fsBg = rect(230,355,640,85,10,'rgba(63,185,80,0.04)',C.fs);
+  fsBg.setAttribute('stroke-dasharray','4 3'); g.append(fsBg);
+  g.append(txt(550,372,'文件系统层 (NTFS)',13,C.fs,'middle',true));
+  const fsItems = [
+    {x:248,y:383,w:100,h:32,label:'FCB',sub:'文件控制块'},
+    {x:358,y:383,w:120,h:32,label:'MFT 记录',sub:'主文件表查询'},
+    {x:488,y:383,w:130,h:32,label:'$Bitmap',sub:'分配新簇'},
+    {x:628,y:383,w:100,h:32,label:'RunList',sub:'更新簇流'},
+    {x:738,y:383,w:100,h:32,label:'$LogFile',sub:'事务日志'},
+  ];
+  fsItems.forEach(fi => {
+    g.append(rect(fi.x,fi.y,fi.w,fi.h,6,'rgba(63,185,80,0.08)',C.fs));
+    g.append(txt(fi.x+fi.w/2,fi.y+12,fi.label,11,C.fs,'middle',true));
+    g.append(txt(fi.x+fi.w/2,fi.y+26,fi.sub,8,C.dim));
+  });
+  g.append(arrow(555,440,555,465,C.fs));
+
+  // ── Filter ──
+  g.append(rect(330,465,440,32,8,'rgba(240,136,62,0.08)',C.filter));
+  g.append(txt(550,484,'过滤器驱动 (防病毒 · 加密 BitLocker · 压缩)',12,C.filter,'middle',true));
+  g.append(arrow(555,497,555,520,C.filter));
+
+  // ── Volume Manager ──
+  g.append(rect(330,520,440,32,8,'rgba(210,153,29,0.08)',C.vol));
+  g.append(txt(550,539,'卷管理器: LCN → LBA · 分区偏移 · 动态卷布局',12,C.vol,'middle',true));
+  g.append(arrow(555,552,555,575,C.vol));
+
+  // ── Disk Driver ──
+  g.append(rect(330,575,440,32,8,'rgba(248,81,73,0.08)',C.hw));
+  g.append(txt(550,594,'磁盘驱动: disk.sys → storport.sys · SRB · DMA',12,C.hw,'middle',true));
+
+  // ── Key difference highlight box ──
+  const calloutX = 40, calloutY = 210;
+  g.append(rect(calloutX,calloutY,200,220,8,'rgba(248,81,73,0.06)',C.red));
+  const calloutLines = [
+    {y:calloutY+20,t:'⚡ 关键区别',c:C.red,bold:true},
+    {y:calloutY+50,t:'① 无缓存参与',c:C.text},
+    {y:calloutY+72,t:'用户缓冲→磁盘',c:C.dim},
+    {y:calloutY+98,t:'② MDL 直接锁定',c:C.text},
+    {y:calloutY+120,t:'用户页面不复制',c:C.dim},
+    {y:calloutY+146,t:'③ 同步等待返回',c:C.text},
+    {y:calloutY+168,t:'磁盘写入完毕才',c:C.dim},
+    {y:calloutY+190,t:'返回给用户态',c:C.dim},
+  ];
+  calloutLines.forEach(cl => {
+    g.append(txt(calloutX+100,cl.y,cl.t,cl.bold?13:11,cl.c,'middle',cl.bold));
+  });
+
+  // Constraint box at bottom
+  g.append(rect(250,620,600,40,8,'rgba(248,81,73,0.06)',C.red));
+  g.append(txt(550,634,'⚠ 约束: 缓冲区必须扇区对齐(通常512B) · 传输长度必须是扇区大小的整数倍 · 否则 ERROR_INVALID_PARAMETER',11,C.red,'middle'));
+  g.append(txt(550,652,'适用: 数据库系统(SQL Server/Oracle) · 大型日志写入 · 需要精确IO控制的场景',10,C.dim));
+
+  // Completion path (right side, dashed)
+  g.append(dashedArrow(890,590,900,590,C.hw));
+  g.append(dashedArrow(900,590,900,360,C.hw));
+  g.append(txt(930,470,'中断→ISR→DPC\nIRP完成回卷\n通知等待线程',10,C.dim));
+  g.append(dashedArrow(900,360,900,224,C.hw));
+  g.append(dashedArrow(900,224,890,224,C.hw));
+  g.append(arrow(890,224,830,224,C.hw));
+
+  // Legend
+  const legendY = 685;
+  const legendItems = [
+    {c:C.user,l:'用户态'},{c:C.kernel,l:'内核态'},{c:C.red,l:'直接IO关键'},
+    {c:C.fs,l:'文件系统'},{c:C.filter,l:'过滤驱动'},{c:C.vol,l:'卷管理'},{c:C.hw,l:'硬件'},
+  ];
+  legendItems.forEach((li,i) => {
+    const lx = 120 + i*130;
+    g.append(el('circle',{cx:lx,cy:legendY,r:6,fill:li.c}));
+    g.append(txt(lx+14,legendY+5,li.l,11,C.dim,'start'));
+  });
+
+  svg.append(g);
+  document.getElementById('overviewCanvas').appendChild(svg);
+}
+
+// ── Memory-Mapped File IO ──
+function drawOverviewMmap() {
+  const W=1100, H=880;
+  const svg = makeSvg(W,H);
+  const g = el('g',{fontFamily:'"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif'});
+  const rect=svgRect, txt=svgTxt, arrow=svgArrow, dashedArrow=svgDashedArrow, label=svgLabel;
+
+  const defs = el('defs');
+  defs.innerHTML=`<marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="${C.edge}"/></marker>`;
+  g.append(defs);
+
+  // ── User Space — Three-step setup ──
+  g.append(rect(340,8,420,56,10,C.surface, C.user));
+  g.append(txt(550,32,'应用程序 (User Space / Ring 3)',14,C.user,'middle',true));
+
+  // Step 1: CreateFile
+  g.append(rect(160,80,220,50,8,'rgba(88,166,255,0.08)',C.user));
+  g.append(txt(270,98,'① CreateFile()',12,C.text,'middle',true));
+  g.append(txt(270,118,'获取文件句柄',10,C.dim));
+
+  // Step 2: CreateFileMapping
+  g.append(rect(430,80,240,50,8,'rgba(88,166,255,0.08)',C.user));
+  g.append(txt(550,98,'② CreateFileMapping()',12,C.text,'middle',true));
+  g.append(txt(550,118,'创建 Section Object (节对象)',10,C.dim));
+
+  // Step 3: MapViewOfFile
+  g.append(rect(720,80,240,50,8,'rgba(163,113,247,0.12)',C.purple));
+  g.append(txt(840,98,'③ MapViewOfFile()',12,C.text,'middle',true));
+  g.append(txt(840,118,'返回虚拟地址指针 → void* ptr',10,C.dim));
+
+  g.append(arrow(270,130,270,160, C.user));
+  g.append(arrow(550,130,550,160, C.user));
+  g.append(arrow(840,130,840,160, C.user));
+
+  // ── The "magic" part: pointer access ──
+  g.append(rect(300,165,500,50,8,'rgba(163,113,247,0.18)',C.purple));
+  g.append(txt(550,183,'✨ 应用直接用指针读写:  *ptr = data;  或  memcpy(ptr, src, len);',12,C.text,'middle',true));
+  g.append(txt(550,203,'没有 WriteFile() 调用!  指针访问触发页异常 → IO 自动发生',10,C.dim));
+
+  g.append(arrow(550,215,550,240, C.purple));
+
+  // Kernel boundary
+  const kBox = rect(200,245,700,255,12,'rgba(163,113,247,0.04)',C.kernel);
+  kBox.setAttribute('stroke-dasharray','4 3'); g.append(kBox);
+  g.append(txt(250,265,'内核空间 (Ring 0)',12,C.kernel,'start',true));
+
+  // Page Fault Handler
+  g.append(rect(290,275,260,42,6,'rgba(57,197,207,0.12)',C.cyan));
+  g.append(txt(420,289,'📌 页异常处理器 (Page Fault Handler)',12,C.cyan,'middle',true));
+  g.append(txt(420,307,'访问未映射地址 → #PF 异常 → MmAccessFault()',10,C.dim));
+
+  g.append(rect(590,275,260,42,6,'rgba(163,113,247,0.1)',C.kernel));
+  g.append(txt(720,289,'Section Object (节对象)',12,C.kernel,'middle',true));
+  g.append(txt(720,307,'文件到进程地址空间的桥梁',10,C.dim));
+
+  g.append(arrow(420,317,420,340, C.cyan));
+  g.append(arrow(720,317,420,340, C.cyan));
+
+  // Cache Manager — Section mapping
+  g.append(rect(290,340,530,42,8,'rgba(57,197,207,0.1)',C.cyan));
+  g.append(txt(555,354,'缓存管理器 / 内存管理器: Section 映射 · 分配物理页 · 建立页表映射',12,C.cyan,'middle',true));
+  g.append(txt(555,372,'VACB 索引 → 将文件的 256KB 视图段映射到进程工作集',10,C.dim));
+
+  g.append(arrow(555,382,555,410, C.cyan));
+
+  // Working Set — mapped pages
+  g.append(rect(290,410,530,50,8,'rgba(57,197,207,0.06)',C.cyan));
+  g.append(txt(555,426,'进程工作集 (Working Set) — 文件页常驻内存',12,C.text,'middle',true));
+  g.append(txt(555,442,'用户态指针 ptr = 虚拟地址 → 页表 → 物理页(文件内容)',10,C.dim));
+  g.append(txt(555,456,'修改 → 页表项 Dirty bit = 1 → PFN 数据库标记为脏页 (Modified Page)',10,C.dim));
+
+  g.append(arrow(555,460,555,490, C.cache));
+
+  // Lazy Writer flush
+  g.append(rect(290,490,530,42,8,'rgba(63,185,80,0.08)',C.green));
+  g.append(txt(555,504,'💾 Lazy Writer / FlushViewOfFile(): 脏页 → 磁盘写入',12,C.green,'middle',true));
+  g.append(txt(555,520,'系统线程定期扫描脏页 → 或应用显式调用 → 批量刷写',10,C.dim));
+
+  g.append(arrow(555,532,555,560, C.green));
+
+  // ── File System & Below ──
+  g.append(rect(330,560,440,28,8,'rgba(63,185,80,0.04)',C.fs));
+  g.append(txt(550,578,'文件系统 NTFS.sys: IRP_MJ_WRITE → MFT · $Bitmap · RunList',11,C.fs,'middle'));
+
+  g.append(arrow(555,588,555,608, C.fs));
+
+  g.append(rect(330,608,440,26,8,'rgba(240,136,62,0.06)',C.filter));
+  g.append(txt(550,624,'过滤器驱动 (加密 · 防病毒 · 去重)',11,C.filter,'middle'));
+
+  g.append(arrow(555,634,555,654, C.filter));
+
+  g.append(rect(330,654,440,26,8,'rgba(210,153,29,0.06)',C.vol));
+  g.append(txt(550,670,'卷管理器: LCN → LBA',11,C.vol,'middle'));
+
+  g.append(arrow(555,680,555,700, C.vol));
+
+  g.append(rect(370,700,360,32,8,'rgba(248,81,73,0.08)',C.hw));
+  g.append(txt(550,718,'💿 磁盘驱动 → 物理磁盘',12,C.hw,'middle'));
+
+  // ── Left callout: key differences ──
+  const calloutX = 30, calloutY = 275;
+  g.append(rect(calloutX,calloutY,210,380,8,'rgba(163,113,247,0.06)',C.purple));
+  const calloutLines = [
+    {y:calloutY+20,t:'🔑 关键特征',c:C.purple,bold:true},
+    {y:calloutY+50,t:'没有 WriteFile() 调用',c:C.text},
+    {y:calloutY+74,t:'指针直接读写',c:C.dim},
+    {y:calloutY+100,t:'页异常驱动IO',c:C.text},
+    {y:calloutY+124,t:'缺页时才触发磁盘读',c:C.dim},
+    {y:calloutY+150,t:'写入 = 内存操作',c:C.text},
+    {y:calloutY+174,t:'修改只发生在内存中',c:C.dim},
+    {y:calloutY+200,t:'延迟刷写',c:C.text},
+    {y:calloutY+224,t:'由 Lazy Writer 异步',c:C.dim},
+    {y:calloutY+250,t:'批量写入磁盘',c:C.dim},
+    {y:calloutY+276,t:'零拷贝路径',c:C.text},
+    {y:calloutY+300,t:'文件内容直接映射到',c:C.dim},
+    {y:calloutY+324,t:'进程地址空间',c:C.dim},
+    {y:calloutY+350,t:'无 ReadFile/WriteFile',c:C.dim},
+  ];
+  calloutLines.forEach(cl => {
+    g.append(txt(calloutX+105,cl.y,cl.t,cl.bold?12:10,cl.c,'middle',cl.bold));
+  });
+
+  // Right side: read path detail
+  const rightX = 850, rightY = 340;
+  g.append(rect(rightX,rightY,210,200,8,'rgba(57,197,207,0.06)',C.cyan));
+  g.append(txt(rightX+105,rightY+16,'📖 读路径',C.cyan,'middle',true));
+  const readLines = [
+    '① 访问 ptr → #PF',
+    '② Section映射文件页',
+    '③ 若未缓存→读磁盘',
+    '④ 页表建立映射',
+    '⑤ 用户态直接读到',
+    '  内存中的数据',
+  ];
+  readLines.forEach((rl,i) => {
+    g.append(txt(rightX+105,rightY+42+i*20,rl,10,i===0?C.text:C.dim,'middle'));
+  });
+
+  // Bottom info
+  g.append(rect(180,750,740,56,8,'rgba(88,166,255,0.04)',C.accent));
+  g.append(txt(550,766,'💡 内存映射文件 = 最高效的 IO 方式之一',13,C.accent,'middle',true));
+  g.append(txt(550,784,'适用: 大文件随机访问 · 进程间共享内存(命名节对象) · 数据库内存缓存(如 LMDB) · 游戏资源包读取',10,C.dim));
+  g.append(txt(550,800,'系统调用次数: 仅 3 次(CreateFile+CreateFileMapping+MapViewOfFile) vs 每次读写都需要 syscall',10,C.dim));
+
+  // Completion path (for write/flush, dashed right side)
+  g.append(dashedArrow(890,716,900,716,C.hw));
+  g.append(dashedArrow(900,716,900,430,C.hw));
+  g.append(txt(930,570,'写入完成\nIRP回卷',9,C.dim));
+  g.append(dashedArrow(900,430,900,360,C.hw));
+
+  // Legend
+  const legendY = 850;
+  const legendItems = [
+    {c:C.user,l:'用户态'},{c:C.purple,l:'映射入口'},{c:C.cyan,l:'Section/页异常'},
+    {c:C.green,l:'Lazy Writer'},{c:C.fs,l:'文件系统'},{c:C.filter,l:'过滤驱动'},
+    {c:C.vol,l:'卷管理'},{c:C.hw,l:'硬件'},
+  ];
+  legendItems.forEach((li,i) => {
+    const lx = 80 + i*122;
+    g.append(el('circle',{cx:lx,cy:legendY,r:6,fill:li.c}));
+    g.append(txt(lx+14,legendY+5,li.l,10,C.dim,'start'));
+  });
+
   svg.append(g);
   document.getElementById('overviewCanvas').appendChild(svg);
 }
@@ -1826,7 +2317,7 @@ navBtns.forEach(btn=>{
     const tid = btn.dataset.tab;
     document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
     document.getElementById('tab-'+tid).classList.add('active');
-    if(tid==='overview' && !document.getElementById('overviewCanvas').children.length) drawOverview();
+    if(tid==='overview' && !document.getElementById('overviewCanvas').children.length) showOverviewSub('buffered');
     if(tid==='flow') showFlowSub(currentFlowSub);
     if(tid==='ntfs') showNTFS(currentNTFS);
     if(tid==='diskinit') showDiskInit(currentDI);
@@ -1850,10 +2341,141 @@ document.addEventListener('click',e=>{
 });
 
 // Init
-drawOverview();
+showOverviewSub('buffered');
 showFlowSub('write');
 showNTFS('arch');
 showDiskInit('mbr');
+
+// ═══════════════════════════════════════════
+//  EDIT MODE
+// ═══════════════════════════════════════════
+let isEditing = false;
+let originalHTML = '';
+const STORAGE_KEY = 'io-principle-html-saved';
+
+function toggleEditMode() {
+  if (!isEditing) {
+    enterEditMode();
+  }
+}
+
+function enterEditMode() {
+  isEditing = true;
+  const toolbar = document.getElementById('editToolbar');
+  const mainContent = document.querySelector('.main-content');
+
+  // Save original HTML for cancel
+  originalHTML = mainContent.innerHTML;
+
+  // Make all sections contenteditable
+  mainContent.classList.add('editing');
+  document.querySelectorAll('.main-content .section, .main-content .hero').forEach(el => {
+    el.setAttribute('contenteditable', 'true');
+  });
+
+  toolbar.classList.add('editing');
+  showToast('✏️ 编辑模式已开启 — 可直接点击修改内容');
+}
+
+function saveEdit() {
+  if (!isEditing) return;
+
+  isEditing = false;
+  const toolbar = document.getElementById('editToolbar');
+  const mainContent = document.querySelector('.main-content');
+
+  // Remove contenteditable
+  mainContent.classList.remove('editing');
+  document.querySelectorAll('.main-content [contenteditable="true"]').forEach(el => {
+    el.removeAttribute('contenteditable');
+  });
+
+  toolbar.classList.remove('editing');
+
+  // Save to localStorage
+  try {
+    localStorage.setItem(STORAGE_KEY, mainContent.innerHTML);
+    showToast('✅ 修改已保存到本地存储');
+  } catch(e) {
+    showToast('⚠️ 保存失败: ' + e.message);
+  }
+}
+
+function cancelEdit() {
+  if (!isEditing) return;
+  if (!confirm('确定要取消编辑吗？未保存的修改将丢失。')) return;
+
+  isEditing = false;
+  const toolbar = document.getElementById('editToolbar');
+  const mainContent = document.querySelector('.main-content');
+
+  // Restore original HTML
+  mainContent.innerHTML = originalHTML;
+  mainContent.classList.remove('editing');
+
+  toolbar.classList.remove('editing');
+  showToast('↩️ 已还原到编辑前的内容');
+}
+
+function downloadHTML() {
+  // Get current document HTML with edits
+  const mainContent = document.querySelector('.main-content');
+  const docClone = document.documentElement.cloneNode(true);
+  const cloneMain = docClone.querySelector('.main-content');
+  if (cloneMain) {
+    cloneMain.innerHTML = mainContent.innerHTML;
+    cloneMain.classList.remove('editing');
+  }
+  // Remove edit toolbar from clone
+  const cloneToolbar = docClone.querySelector('.edit-toolbar');
+  if (cloneToolbar) cloneToolbar.remove();
+
+  // Remove contenteditable attributes
+  docClone.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+
+  const htmlContent = '<!DOCTYPE html>\n' + docClone.outerHTML;
+  const blob = new Blob([htmlContent], {type: 'text/html;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'IO原理_已编辑.html';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('📥 HTML 文件已下载');
+}
+
+function showToast(msg) {
+  // Remove existing toast
+  const existing = document.querySelector('.edit-toast');
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.className = 'edit-toast';
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+
+  // Auto remove after animation
+  setTimeout(() => {
+    if (toast.parentNode) toast.remove();
+  }, 2200);
+}
+
+// Load saved content from localStorage on page load
+(function loadSavedContent() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const mainContent = document.querySelector('.main-content');
+      if (mainContent && saved.trim()) {
+        mainContent.innerHTML = saved;
+      }
+    }
+  } catch(e) {
+    // Silently ignore if localStorage is unavailable
+  }
+})();
 </script>
 </body>
 </html>
